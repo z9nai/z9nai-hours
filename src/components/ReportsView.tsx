@@ -42,18 +42,20 @@ export default function ReportsView() {
     );
   }, [entries, year, month, clientId]);
 
-  // Project totals
+  // Project totals grouped by (clientId, project)
   const projectTotals = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, { clientId: string; project: string; mins: number }>();
     for (const e of filtered) {
       const mins = parseMins(e.endTime) - parseMins(e.startTime);
-      const key = e.project || '(kein Projekt)';
-      map.set(key, (map.get(key) ?? 0) + mins);
+      const key = `${e.clientId}::${e.project || '(kein Projekt)'}`;
+      const existing = map.get(key);
+      if (existing) { existing.mins += mins; }
+      else { map.set(key, { clientId: e.clientId, project: e.project || '(kein Projekt)', mins }); }
     }
-    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+    return Array.from(map.values()).sort((a, b) => b.mins - a.mins);
   }, [filtered]);
 
-  const grandTotal = useMemo(() => projectTotals.reduce((s, [, m]) => s + m, 0), [projectTotals]);
+  const grandTotal = useMemo(() => projectTotals.reduce((s, r) => s + r.mins, 0), [projectTotals]);
 
   // Group by date
   const byDay = useMemo(() => {
@@ -107,14 +109,25 @@ export default function ReportsView() {
             </div>
             <table className="w-full">
               <tbody>
-                {projectTotals.map(([project, mins]) => (
-                  <tr key={project} className={`border-t ${border}`}>
-                    <td className={`px-4 py-2 text-xs ${isDark ? 'text-white/70' : 'text-black/70'}`}>{project}</td>
-                    <td className={`px-4 py-2 text-xs text-right tabular-nums ${isDark ? 'text-white/50' : 'text-black/50'}`}>
-                      {fmtDuration(mins)}
-                    </td>
-                  </tr>
-                ))}
+                {projectTotals.map((row, i) => {
+                  const rowClient = clients.find(c => c.id === row.clientId);
+                  return (
+                    <tr key={i} className={`border-t ${border}`}>
+                      <td className={`px-4 py-2 text-xs ${isDark ? 'text-white/70' : 'text-black/70'}`}>
+                        <div className="flex items-center gap-1.5">
+                          {rowClient && <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${clientColorClasses(rowClient.color).dot}`} />}
+                          {row.project}
+                          {clientId === 'all' && rowClient && (
+                            <span className={`font-normal ${muted}`}>{rowClient.name}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className={`px-4 py-2 text-xs text-right tabular-nums ${isDark ? 'text-white/50' : 'text-black/50'}`}>
+                        {fmtDuration(row.mins)}
+                      </td>
+                    </tr>
+                  );
+                })}
                 <tr className={`border-t-2 ${isDark ? 'border-white/15' : 'border-black/15'}`}>
                   <td className={`px-4 py-2.5 text-xs font-semibold ${isDark ? 'text-white' : 'text-black'}`}>Total</td>
                   <td className={`px-4 py-2.5 text-xs font-semibold text-right tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
@@ -152,13 +165,11 @@ export default function ReportsView() {
                           {e.startTime}–{e.endTime}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <div className={`text-xs font-medium truncate ${isDark ? 'text-white/80' : 'text-black/80'}`}>
+                          <div className={`flex items-center gap-1.5 text-xs font-medium truncate ${isDark ? 'text-white/80' : 'text-black/80'}`}>
+                            {client && <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${clientColorClasses(client.color).dot}`} />}
                             {e.project || '—'}
                             {clientId === 'all' && client && (
-                              <span className="inline-flex items-center gap-1 ml-2">
-                                <span className={`inline-block w-2 h-2 rounded-full ${clientColorClasses(client.color).dot}`} />
-                                <span className={`font-normal ${muted}`}>{client.name}</span>
-                              </span>
+                              <span className={`font-normal ${muted}`}>{client.name}</span>
                             )}
                           </div>
                           {e.description && (
