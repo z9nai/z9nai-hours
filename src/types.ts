@@ -26,6 +26,7 @@ export interface Client {
   name: string;
   address: Address;
   contact: ContactPerson;
+  color: string; // key from CLIENT_COLORS palette
 }
 
 export interface TimeEntry {

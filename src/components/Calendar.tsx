@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
+import { clientColorClasses } from '../colors';
 
-const HOUR_START = 7;
-const HOUR_END = 20;
+const HOUR_START = 5;
+const HOUR_END = 23;
 const SLOT_HEIGHT = 16; // px per 15-min slot
 const TOTAL_SLOTS = (HOUR_END - HOUR_START) * 4;
 const TIME_COL_W = 44;
@@ -31,6 +32,49 @@ function dateToISO(d: Date): string {
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+function genId() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+/**
+ * Find the first slot where an entry of `duration` fits on `date`,
+ * starting the search at `preferredStart` and wrapping to slot 0 if needed.
+ * Returns -1 if the day is completely full.
+ */
+function findFreeSlot(
+  date: string,
+  duration: number,
+  preferredStart: number,
+  allEntries: TimeEntry[],
+  excludeId?: string,
+): number {
+  const occ = allEntries
+    .filter(e => e.date === date && e.id !== excludeId)
+    .map(e => ({ s: timeToSlot(e.startTime), e: timeToSlot(e.endTime) }))
+    .sort((a, b) => a.s - b.s);
+
+  const fits = (start: number) =>
+    start >= 0 &&
+    start + duration <= TOTAL_SLOTS &&
+    !occ.some(o => start < o.e && start + duration > o.s);
+
+  // Scan forward from preferred position
+  let slot = clamp(preferredStart, 0, TOTAL_SLOTS - duration);
+  while (slot + duration <= TOTAL_SLOTS) {
+    if (fits(slot)) return slot;
+    const b = occ.find(o => slot < o.e && slot + duration > o.s);
+    slot = b ? b.e : slot + 1;
+  }
+  // Wrap around: scan from beginning up to preferred position
+  slot = 0;
+  while (slot < preferredStart) {
+    if (fits(slot)) return slot;
+    const b = occ.find(o => slot < o.e && slot + duration > o.s);
+    slot = b ? b.e : slot + 1;
+  }
+  return -1; // day is packed
 }
 
 function getWeekDays(weekOffset: number): Date[] {
@@ -64,7 +108,7 @@ interface Props {
 }
 
 export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
-  const { entries, isDark, clients, updateEntry } = useStore();
+  const { entries, isDark, clients, addEntry, updateEntry } = useStore();
   const [weekOffset, setWeekOffset] = useState(0);
   const days = getWeekDays(weekOffset);
 
@@ -75,6 +119,43 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+
+  // Always-current snapshot of entries for use inside event callbacks
+  const entriesRef = useRef(entries);
+  useEffect(() => { entriesRef.current = entries; }, [entries]);
+
+  // ── Copy flash state ─────────────────────────────────────────────────────
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const copyEntry = useCallback((entry: TimeEntry) => {
+    const duration = timeToSlot(entry.endTime) - timeToSlot(entry.startTime);
+    // Try right after the original on the same day, then earlier gaps, then next days
+    let targetDate = entry.date;
+    let freeStart = findFreeSlot(entry.date, duration, timeToSlot(entry.endTime), entriesRef.current);
+    if (freeStart < 0) {
+      // Day is full — walk forward up to 7 days
+      const [dy, dm, dd] = entry.date.split('-').map(Number);
+      for (let offset = 1; offset <= 7; offset++) {
+        const next = new Date(dy, dm - 1, dd + offset);
+        targetDate = dateToISO(next);
+        freeStart = findFreeSlot(targetDate, duration, timeToSlot(entry.startTime), entriesRef.current);
+        if (freeStart >= 0) break;
+      }
+    }
+    if (freeStart >= 0) {
+      addEntry({
+        ...entry,
+        id: genId(),
+        date: targetDate,
+        startTime: slotToTime(freeStart),
+        endTime: slotToTime(freeStart + duration),
+      });
+    }
+    setCopiedId(entry.id);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopiedId(null), 1200);
+  }, [addEntry]);
 
   // ── Tooltip ───────────────────────────────────────────────────────────────
   const [hoveredEntry, setHoveredEntry] = useState<TimeEntry | null>(null);
@@ -97,16 +178,9 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
   }, []);
 
   const clientColor = useCallback((clientId: string) => {
-    const idx = clients.findIndex(c => c.id === clientId);
-    const colors = [
-      'bg-blue-500/70 border-blue-400',
-      'bg-emerald-500/70 border-emerald-400',
-      'bg-violet-500/70 border-violet-400',
-      'bg-amber-500/70 border-amber-400',
-      'bg-rose-500/70 border-rose-400',
-      'bg-cyan-500/70 border-cyan-400',
-    ];
-    return colors[idx % colors.length] ?? colors[0];
+    const client = clients.find(c => c.id === clientId);
+    const c = clientColorClasses(client?.color ?? '');
+    return `${c.bg} ${c.border}`;
   }, [clients]);
 
   // Convert a raw MouseEvent to { slot, dayIdx } relative to the grid
@@ -149,30 +223,56 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
       const cur = iaRef.current;
       if (!cur) { setIa(null); return; }
       const { slot, dayIdx } = mouseToSlotDay(e);
+      const snap = entriesRef.current;
 
       if (cur.kind === 'select') {
         const lo = Math.min(cur.startSlot, cur.endSlot);
         const hi = Math.max(cur.startSlot, cur.endSlot) + 1;
         onSelect({ date: dateToISO(days[cur.dayIdx]), startTime: slotToTime(lo), endTime: slotToTime(hi) });
+
       } else if (cur.kind === 'move') {
         if (didMoveRef.current) {
           const duration = timeToSlot(cur.entry.endTime) - timeToSlot(cur.entry.startTime);
-          const newStart = clamp(slot - cur.slotOffset, 0, TOTAL_SLOTS - duration);
-          updateEntry({
-            ...cur.entry,
-            date: dateToISO(days[cur.currentDayIdx]),
-            startTime: slotToTime(newStart),
-            endTime: slotToTime(newStart + duration),
-          });
+          const requested = clamp(slot - cur.slotOffset, 0, TOTAL_SLOTS - duration);
+          const targetDate = dateToISO(days[cur.currentDayIdx]);
+          // Find nearest free slot on the target day (excluding the entry being moved)
+          const freeStart = findFreeSlot(targetDate, duration, requested, snap, cur.entry.id);
+          if (freeStart >= 0) {
+            updateEntry({
+              ...cur.entry,
+              date: targetDate,
+              startTime: slotToTime(freeStart),
+              endTime: slotToTime(freeStart + duration),
+            });
+          }
+          // freeStart === -1 means day is full → silently keep original position
         } else {
           onEditEntry(cur.entry); // no movement → treat as click
         }
+
       } else if (cur.kind === 'resize-top') {
-        const origEnd = timeToSlot(cur.entry.endTime);
-        updateEntry({ ...cur.entry, startTime: slotToTime(clamp(slot, 0, origEnd - 1)) });
+        const origStart = timeToSlot(cur.entry.startTime);
+        const origEnd   = timeToSlot(cur.entry.endTime);
+        const requested = clamp(slot, 0, origEnd - 1);
+        // Don't overlap any entry that ends inside (requested, origStart]
+        const prevBlockerEnd = snap
+          .filter(e => e.date === cur.entry.date && e.id !== cur.entry.id)
+          .map(e => timeToSlot(e.endTime))
+          .filter(end => end > requested && end <= origStart)
+          .reduce((max, v) => Math.max(max, v), requested);
+        updateEntry({ ...cur.entry, startTime: slotToTime(prevBlockerEnd) });
+
       } else if (cur.kind === 'resize-bottom') {
         const origStart = timeToSlot(cur.entry.startTime);
-        updateEntry({ ...cur.entry, endTime: slotToTime(clamp(slot, origStart + 1, TOTAL_SLOTS)) });
+        const origEnd   = timeToSlot(cur.entry.endTime);
+        const requested = clamp(slot, origStart + 1, TOTAL_SLOTS);
+        // Don't overlap any entry that starts inside [origEnd, requested)
+        const nextBlockerStart = snap
+          .filter(e => e.date === cur.entry.date && e.id !== cur.entry.id)
+          .map(e => timeToSlot(e.startTime))
+          .filter(s => s >= origEnd && s < requested)
+          .reduce((min, v) => Math.min(min, v), requested);
+        updateEntry({ ...cur.entry, endTime: slotToTime(nextBlockerStart) });
       }
 
       iaRef.current = null;
@@ -201,10 +301,24 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
       return { startSlot: s, endSlot: s + dur, dayIdx: ia.currentDayIdx };
     }
     if (ia.kind === 'resize-top' && ia.entry.id === entry.id) {
-      return { startSlot: clamp(ia.currentSlot, 0, origEnd - 1), endSlot: origEnd, dayIdx: origDay };
+      const requested = clamp(ia.currentSlot, 0, origEnd - 1);
+      // Hard-stop live preview at the end of the nearest previous entry
+      const prevBlockerEnd = entries
+        .filter(e => e.date === entry.date && e.id !== entry.id)
+        .map(e => timeToSlot(e.endTime))
+        .filter(end => end > requested && end <= origStart)
+        .reduce((max, v) => Math.max(max, v), requested);
+      return { startSlot: prevBlockerEnd, endSlot: origEnd, dayIdx: origDay };
     }
     if (ia.kind === 'resize-bottom' && ia.entry.id === entry.id) {
-      return { startSlot: origStart, endSlot: clamp(ia.currentSlot, origStart + 1, TOTAL_SLOTS), dayIdx: origDay };
+      const requested = clamp(ia.currentSlot, origStart + 1, TOTAL_SLOTS);
+      // Hard-stop live preview at the start of the nearest next entry
+      const nextBlockerStart = entries
+        .filter(e => e.date === entry.date && e.id !== entry.id)
+        .map(e => timeToSlot(e.startTime))
+        .filter(s => s >= origEnd && s < requested)
+        .reduce((min, v) => Math.min(min, v), requested);
+      return { startSlot: origStart, endSlot: nextBlockerStart, dayIdx: origDay };
     }
     return { startSlot: origStart, endSlot: origEnd, dayIdx: origDay };
   };
@@ -313,6 +427,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                   const color  = clientColor(entry.clientId);
                   const isSelected = entry.id === selectedId;
                   const active     = isEntryActive(entry.id);
+                  const justCopied = copiedId === entry.id;
 
                   return (
                     <div
@@ -323,6 +438,25 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                         ${active ? 'opacity-95 shadow-lg z-10' : 'opacity-80 hover:opacity-100'}`}
                       style={{ top, height }}
                     >
+                      {/* ── Copy button (visible only when selected) ── */}
+                      {isSelected && (
+                        <button
+                          className={`absolute z-30 flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-semibold
+                            transition-all duration-150 pointer-events-auto
+                            ${justCopied
+                              ? 'bg-white/40 text-white'
+                              : 'bg-black/25 hover:bg-black/45 text-white/90 hover:text-white'}`}
+                          style={{ top: HANDLE_PX + 2, right: 3 }}
+                          onMouseDown={e => e.stopPropagation()}
+                          onClick={e => { e.stopPropagation(); endHover(); copyEntry(entry); }}
+                          title="Eintrag kopieren"
+                        >
+                          {justCopied
+                            ? <><Check size={8} /> Kopiert</>
+                            : <><Copy size={8} /> Kopieren</>}
+                        </button>
+                      )}
+
                       {/* ▲ Top resize handle */}
                       <div
                         className="absolute top-0 left-0 right-0 z-20 group"

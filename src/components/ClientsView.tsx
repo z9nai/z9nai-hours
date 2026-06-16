@@ -2,19 +2,16 @@ import React, { useState } from 'react';
 import { Plus, Pencil, X } from 'lucide-react';
 import { Client, Address, ContactPerson } from '../types';
 import { useStore } from '../store';
+import { CLIENT_COLORS, DEFAULT_COLOR } from '../colors';
 
 const EMPTY_ADDR: Address = { street: '', zip: '', city: '', country: 'CH' };
 const EMPTY_CONTACT: ContactPerson = { name: '', email: '', phone: '' };
-const EMPTY_CLIENT: Omit<Client, 'id'> = { uid: '', name: '', address: { ...EMPTY_ADDR }, contact: { ...EMPTY_CONTACT } };
+const EMPTY_CLIENT: Omit<Client, 'id'> = { uid: '', name: '', color: DEFAULT_COLOR, address: { ...EMPTY_ADDR }, contact: { ...EMPTY_CONTACT } };
 
 function genId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
 function Field({ label, value, onChange, placeholder, isDark }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  isDark: boolean;
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; isDark: boolean;
 }) {
   const inputCls = isDark
     ? 'bg-white/5 border-white/10 text-white placeholder-white/20 focus:border-white/30'
@@ -24,6 +21,27 @@ function Field({ label, value, onChange, placeholder, isDark }: {
       <label className={`block text-[10px] uppercase tracking-wider mb-1 ${isDark ? 'text-white/40' : 'text-black/40'}`}>{label}</label>
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`} />
+    </div>
+  );
+}
+
+function ColorPicker({ value, onChange, isDark }: { value: string; onChange: (v: string) => void; isDark: boolean }) {
+  return (
+    <div>
+      <label className={`block text-[10px] uppercase tracking-wider mb-1.5 ${isDark ? 'text-white/40' : 'text-black/40'}`}>Farbe</label>
+      <div className="flex gap-2 flex-wrap">
+        {Object.entries(CLIENT_COLORS).map(([key, c]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChange(key)}
+            title={c.label}
+            className={`w-6 h-6 rounded-full transition-all ${c.dot} ${
+              value === key ? 'ring-2 ring-offset-2 ring-white/60 scale-110' : 'opacity-60 hover:opacity-100'
+            } ${isDark ? 'ring-offset-[#14151a]' : 'ring-offset-[#ededea]'}`}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -52,6 +70,7 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
         <Field label="Firmenname" value={f.name} onChange={v => setTop('name', v)} placeholder="Acme AG" isDark={isDark} />
         <Field label="UID" value={f.uid} onChange={v => setTop('uid', v)} placeholder="CHE-123.456.789" isDark={isDark} />
       </div>
+      <ColorPicker value={f.color || DEFAULT_COLOR} onChange={v => setTop('color', v)} isDark={isDark} />
       <div className="grid grid-cols-3 gap-3">
         <div className="col-span-2">
           <Field label="Strasse" value={f.address.street} onChange={v => setAddr('street', v)} placeholder="Musterstrasse 1" isDark={isDark} />
@@ -128,40 +147,46 @@ export default function ClientsView() {
       )}
 
       <div className="space-y-3">
-        {clients.map(c => (
-          <div key={c.id} className={`rounded-xl border ${border} ${isDark ? 'bg-white/2' : 'bg-black/2'}`}>
-            {editId === c.id ? (
-              <div className="p-4">
-                <ClientForm initial={c} onSave={d => update(c.id, d)} onCancel={() => setEditId(null)} isDark={isDark} />
-              </div>
-            ) : (
-              <div className="px-4 py-3 flex items-start justify-between gap-4">
-                <div>
-                  <div className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-black'}`}>{c.name}</div>
-                  <div className={`text-[11px] mt-0.5 ${textMuted}`}>
-                    {c.uid && <span className="mr-3">{c.uid}</span>}
-                    {c.address.street && <span>{c.address.street}, {c.address.zip} {c.address.city}</span>}
-                  </div>
-                  {c.contact.name && (
-                    <div className={`text-[11px] mt-1 ${textMuted}`}>
-                      {c.contact.name}{c.contact.email && ` · ${c.contact.email}`}{c.contact.phone && ` · ${c.contact.phone}`}
+        {clients.map(c => {
+          const color = CLIENT_COLORS[c.color] ?? CLIENT_COLORS[DEFAULT_COLOR];
+          return (
+            <div key={c.id} className={`rounded-xl border ${border} ${isDark ? 'bg-white/2' : 'bg-black/2'}`}>
+              {editId === c.id ? (
+                <div className="p-4">
+                  <ClientForm initial={c} onSave={d => update(c.id, d)} onCancel={() => setEditId(null)} isDark={isDark} />
+                </div>
+              ) : (
+                <div className="px-4 py-3 flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className={`w-3 h-3 rounded-full flex-shrink-0 mt-1 ${color.dot}`} />
+                    <div>
+                      <div className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-black'}`}>{c.name}</div>
+                      <div className={`text-[11px] mt-0.5 ${textMuted}`}>
+                        {c.uid && <span className="mr-3">{c.uid}</span>}
+                        {c.address.street && <span>{c.address.street}, {c.address.zip} {c.address.city}</span>}
+                      </div>
+                      {c.contact.name && (
+                        <div className={`text-[11px] mt-1 ${textMuted}`}>
+                          {c.contact.name}{c.contact.email && ` · ${c.contact.email}`}{c.contact.phone && ` · ${c.contact.phone}`}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button onClick={() => setEditId(c.id)}
+                      className={`p-1.5 rounded transition-colors ${isDark ? 'text-white/25 hover:text-white/70' : 'text-black/25 hover:text-black/70'}`}>
+                      <Pencil size={12} />
+                    </button>
+                    <button onClick={() => remove(c.id)}
+                      className={`p-1.5 rounded transition-colors ${isDark ? 'text-white/25 hover:text-red-400' : 'text-black/25 hover:text-red-500'}`}>
+                      <X size={12} />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-1 flex-shrink-0">
-                  <button onClick={() => setEditId(c.id)}
-                    className={`p-1.5 rounded transition-colors ${isDark ? 'text-white/25 hover:text-white/70' : 'text-black/25 hover:text-black/70'}`}>
-                    <Pencil size={12} />
-                  </button>
-                  <button onClick={() => remove(c.id)}
-                    className={`p-1.5 rounded transition-colors ${isDark ? 'text-white/25 hover:text-red-400' : 'text-black/25 hover:text-red-500'}`}>
-                    <X size={12} />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

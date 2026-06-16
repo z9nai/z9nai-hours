@@ -60,8 +60,8 @@ export default function App() {
           Z9nAI Hours
         </span>
         {navBtn('calendar', Clock, 'Stunden')}
-        {navBtn('clients', Users, 'Kunden')}
         {navBtn('reports', BarChart2, 'Report')}
+        {navBtn('clients', Users, 'Kunden')}
         {navBtn('company', Building2, 'Firma')}
 
         <div className="ml-auto flex items-center gap-3">

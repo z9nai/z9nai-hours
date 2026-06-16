@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { TimeEntry } from '../types';
+import { clientColorClasses } from '../colors';
 
 const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -154,7 +155,10 @@ export default function ReportsView() {
                           <div className={`text-xs font-medium truncate ${isDark ? 'text-white/80' : 'text-black/80'}`}>
                             {e.project || '—'}
                             {clientId === 'all' && client && (
-                              <span className={`ml-2 font-normal ${muted}`}>{client.name}</span>
+                              <span className="inline-flex items-center gap-1 ml-2">
+                                <span className={`inline-block w-2 h-2 rounded-full ${clientColorClasses(client.color).dot}`} />
+                                <span className={`font-normal ${muted}`}>{client.name}</span>
+                              </span>
                             )}
                           </div>
                           {e.description && (
