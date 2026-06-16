@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  background: #0e0f11;
+  color: #e8e8e8;
+}
+
+.light body {
+  background: #f5f4f0;
+  color: #1a1a1a;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+.light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); }
+
+/* Calendar slot hover/selection */
+.cal-slot { user-select: none; }
+.cal-slot:hover { background: rgba(255,255,255,0.04); }
+.light .cal-slot:hover { background: rgba(0,0,0,0.04); }
+.cal-slot.selecting { background: rgba(99,179,237,0.25); }
+.light .cal-slot.selecting { background: rgba(59,130,246,0.15); }
