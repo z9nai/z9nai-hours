@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { Sun, Moon, FolderOpen, Clock, Users, Building2 } from 'lucide-react';
+import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2 } from 'lucide-react';
 import { useStore } from './store';
 import { TimeEntry } from './types';
 import Calendar from './components/Calendar';
 import EntryPanel from './components/EntryPanel';
 import ClientsView from './components/ClientsView';
 import CompanyView from './components/CompanyView';
+import ReportsView from './components/ReportsView';
 
-type View = 'calendar' | 'clients' | 'company';
+type View = 'calendar' | 'clients' | 'reports' | 'company';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
@@ -60,6 +61,7 @@ export default function App() {
         </span>
         {navBtn('calendar', Clock, 'Stunden')}
         {navBtn('clients', Users, 'Kunden')}
+        {navBtn('reports', BarChart2, 'Report')}
         {navBtn('company', Building2, 'Firma')}
 
         <div className="ml-auto flex items-center gap-3">
@@ -121,6 +123,10 @@ export default function App() {
         ) : view === 'clients' ? (
           <div className="flex-1 overflow-y-auto">
             <ClientsView />
+          </div>
+        ) : view === 'reports' ? (
+          <div className="flex-1 overflow-y-auto">
+            <ReportsView />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">

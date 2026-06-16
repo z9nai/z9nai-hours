@@ -23,7 +23,10 @@ function timeToSlot(time: string): number {
 }
 
 function dateToISO(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function clamp(v: number, lo: number, hi: number) {
@@ -43,7 +46,7 @@ function getWeekDays(weekOffset: number): Date[] {
   });
 }
 
-const DAY_NAMES = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+const DAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
 const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
@@ -249,7 +252,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           const isToday = iso === today;
           return (
             <div key={i} className={`flex-1 text-center py-1.5 text-xs ${isToday ? (isDark ? 'text-blue-400' : 'text-blue-600') : textMuted}`}>
-              <div className="font-semibold">{DAY_NAMES[i]}</div>
+              <div className="font-semibold truncate px-1">{DAY_NAMES[i]}</div>
               <div className={`text-[11px] ${isToday ? 'font-bold' : ''}`}>{d.getDate()}</div>
             </div>
           );
