@@ -73,6 +73,26 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
+  // ── Tooltip ───────────────────────────────────────────────────────────────
+  const [hoveredEntry, setHoveredEntry] = useState<TimeEntry | null>(null);
+  const [tipPos, setTipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startHover = useCallback((entry: TimeEntry, x: number, y: number) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHoveredEntry(entry), 400);
+    setTipPos({ x, y });
+  }, []);
+
+  const moveHover = useCallback((x: number, y: number) => {
+    setTipPos({ x, y });
+  }, []);
+
+  const endHover = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHoveredEntry(null);
+  }, []);
+
   const clientColor = useCallback((clientId: string) => {
     const idx = clients.findIndex(c => c.id === clientId);
     const colors = [
@@ -318,8 +338,12 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                       <div
                         className="absolute inset-0 px-1 overflow-hidden"
                         style={{ top: HANDLE_PX, bottom: HANDLE_PX, cursor: active ? 'grabbing' : 'grab' }}
+                        onMouseEnter={e => startHover(entry, e.clientX, e.clientY)}
+                        onMouseMove={e => moveHover(e.clientX, e.clientY)}
+                        onMouseLeave={endHover}
                         onMouseDown={e => {
                           e.stopPropagation();
+                          endHover();
                           didMoveRef.current = false;
                           const { slot } = mouseToSlotDay(e.nativeEvent);
                           const origDay = days.findIndex(d => dateToISO(d) === entry.date);
@@ -363,6 +387,97 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           })}
         </div>
       </div>
+
+      {/* ── Tooltip / Sprechblase ── */}
+      {hoveredEntry && !ia && (() => {
+        const tc = clients.find(c => c.id === hoveredEntry.clientId);
+        const [sh, sm] = hoveredEntry.startTime.split(':').map(Number);
+        const [eh, em] = hoveredEntry.endTime.split(':').map(Number);
+        const mins = (eh * 60 + em) - (sh * 60 + sm);
+        const dur = `${Math.floor(mins / 60)}h${mins % 60 > 0 ? ` ${mins % 60}min` : ''}`;
+        const [dy, dm, dd] = hoveredEntry.date.split('-').map(Number);
+        const dateStr = new Date(dy, dm - 1, dd).toLocaleDateString('de-CH', {
+          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+        });
+
+        const TIP_W = 230;
+        const GAP   = 14;
+        const toRight = tipPos.x + GAP + TIP_W < window.innerWidth - 12;
+        const left = toRight ? tipPos.x + GAP : tipPos.x - GAP - TIP_W;
+        const top  = Math.min(tipPos.y - 8, window.innerHeight - 260);
+
+        const panelCls = isDark
+          ? 'bg-[#1c1d22] border-white/12 text-white shadow-[0_8px_32px_rgba(0,0,0,0.6)]'
+          : 'bg-white border-black/10 text-black shadow-[0_8px_32px_rgba(0,0,0,0.15)]';
+        const labelCls = isDark ? 'text-white/35' : 'text-black/35';
+        const dividerCls = isDark ? 'border-white/8' : 'border-black/8';
+        const arrowBg = isDark ? '#1c1d22' : '#ffffff';
+        const arrowBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)';
+
+        return (
+          <div
+            className={`fixed z-50 pointer-events-none rounded-xl border text-[11px] leading-relaxed ${panelCls}`}
+            style={{ left, top, width: TIP_W }}
+          >
+            {/* Arrow */}
+            <div style={{
+              position: 'absolute',
+              top: 12,
+              [toRight ? 'left' : 'right']: -5,
+              width: 10, height: 10,
+              background: arrowBg,
+              border: `1px solid ${arrowBorder}`,
+              borderRight: toRight ? 'none' : undefined,
+              borderTop:   toRight ? 'none' : undefined,
+              borderLeft:  toRight ? undefined : 'none',
+              borderBottom: toRight ? undefined : 'none',
+              transform: 'rotate(45deg)',
+            }} />
+
+            <div className="px-3 pt-2.5 pb-2 space-y-1.5">
+              {/* Project + client */}
+              <div>
+                <div className="font-semibold text-[12px] leading-tight">
+                  {hoveredEntry.project || tc?.name || '—'}
+                </div>
+                {hoveredEntry.project && tc?.name && (
+                  <div className={labelCls}>{tc.name}</div>
+                )}
+              </div>
+
+              <div className={`border-t ${dividerCls}`} />
+
+              {/* Date */}
+              <div className="flex gap-2">
+                <span className={`w-14 flex-shrink-0 ${labelCls}`}>Datum</span>
+                <span className="font-medium">{dateStr}</span>
+              </div>
+
+              {/* Time */}
+              <div className="flex gap-2">
+                <span className={`w-14 flex-shrink-0 ${labelCls}`}>Zeit</span>
+                <span className="font-medium">{hoveredEntry.startTime} – {hoveredEntry.endTime}</span>
+              </div>
+
+              {/* Duration */}
+              <div className="flex gap-2">
+                <span className={`w-14 flex-shrink-0 ${labelCls}`}>Dauer</span>
+                <span className="font-medium">{dur}</span>
+              </div>
+
+              {/* Description */}
+              {hoveredEntry.description && (
+                <>
+                  <div className={`border-t ${dividerCls}`} />
+                  <div className={`${labelCls} leading-snug`}>
+                    {hoveredEntry.description}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
