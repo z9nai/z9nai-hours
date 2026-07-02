@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
@@ -108,9 +108,51 @@ interface Props {
 }
 
 export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
-  const { entries, isDark, clients, addEntry, updateEntry } = useStore();
+  const { entries, isDark, clients, addEntry, updateEntry, currentMonth, setMonth, readMonthEntries } = useStore();
   const [weekOffset, setWeekOffset] = useState(0);
   const days = getWeekDays(weekOffset);
+
+  // ── Load entries for the visible week ──────────────────────────────────────
+  // Secondary month entries (calEntries) = months in the week that are NOT currentMonth
+  const [calEntries, setCalEntries] = useState<TimeEntry[]>([]);
+
+  useEffect(() => {
+    const d = getWeekDays(weekOffset);
+    // Primary month = Wednesday's month (middle of week, most representative)
+    const wed = d[2];
+    const primY = wed.getFullYear();
+    const primM = wed.getMonth() + 1;
+
+    // Sync store's current month so writes go to the right file
+    if (primY !== currentMonth.year || primM !== currentMonth.month) {
+      setMonth(primY, primM);
+    }
+
+    // Load entries for any secondary month visible in the week
+    const primaryKey = `${primY}-${primM}`;
+    const secondaryMonths: { y: number; m: number }[] = [];
+    const seen = new Set<string>([primaryKey]);
+    for (const day of d) {
+      const k = `${day.getFullYear()}-${day.getMonth() + 1}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        secondaryMonths.push({ y: day.getFullYear(), m: day.getMonth() + 1 });
+      }
+    }
+    if (secondaryMonths.length > 0) {
+      Promise.all(secondaryMonths.map(({ y, m }) => readMonthEntries(y, m)))
+        .then(results => setCalEntries(results.flat()));
+    } else {
+      setCalEntries([]);
+    }
+  }, [weekOffset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Merge: store.entries (primary month, always current) + calEntries (secondary months)
+  const primaryPrefix = `${currentMonth.year}-${String(currentMonth.month).padStart(2, '0')}`;
+  const displayEntries = useMemo(() => {
+    const secondary = calEntries.filter(e => !e.date.startsWith(primaryPrefix));
+    return [...secondary, ...entries];
+  }, [calEntries, entries, primaryPrefix]);
 
   // Interaction stored in both ref (for event callbacks) and state (for rendering)
   const iaRef = useRef<Interaction | null>(null);
@@ -121,8 +163,8 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   // Always-current snapshot of entries for use inside event callbacks
-  const entriesRef = useRef(entries);
-  useEffect(() => { entriesRef.current = entries; }, [entries]);
+  const entriesRef = useRef(displayEntries);
+  useEffect(() => { entriesRef.current = displayEntries; }, [displayEntries]);
 
   // ── Copy flash state ─────────────────────────────────────────────────────
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -303,7 +345,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
     if (ia.kind === 'resize-top' && ia.entry.id === entry.id) {
       const requested = clamp(ia.currentSlot, 0, origEnd - 1);
       // Hard-stop live preview at the end of the nearest previous entry
-      const prevBlockerEnd = entries
+      const prevBlockerEnd = displayEntries
         .filter(e => e.date === entry.date && e.id !== entry.id)
         .map(e => timeToSlot(e.endTime))
         .filter(end => end > requested && end <= origStart)
@@ -313,7 +355,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
     if (ia.kind === 'resize-bottom' && ia.entry.id === entry.id) {
       const requested = clamp(ia.currentSlot, origStart + 1, TOTAL_SLOTS);
       // Hard-stop live preview at the start of the nearest next entry
-      const nextBlockerStart = entries
+      const nextBlockerStart = displayEntries
         .filter(e => e.date === entry.date && e.id !== entry.id)
         .map(e => timeToSlot(e.startTime))
         .filter(s => s >= origEnd && s < requested)
@@ -342,7 +384,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
   };
   const dayMins = days.map(d => {
     const iso = dateToISO(d);
-    return entries.filter(e => e.date === iso).reduce((s, e) => s + entryMins(e), 0);
+    return displayEntries.filter(e => e.date === iso).reduce((s, e) => s + entryMins(e), 0);
   });
   const weekMins = dayMins.reduce((s, m) => s + m, 0);
   const fmtMins = (m: number) => m === 0 ? '' : m % 60 === 0 ? `${m / 60}h` : `${Math.floor(m / 60)}h ${m % 60}m`;
@@ -415,7 +457,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           {/* Day columns */}
           {days.map((day, dayIdx) => {
             // Render entries whose LIVE position lands in this column
-            const dayEntries = entries.filter(e => livePos(e).dayIdx === dayIdx);
+            const dayEntries = displayEntries.filter(e => livePos(e).dayIdx === dayIdx);
 
             return (
               <div key={dayIdx} className={`flex-1 relative border-l ${border}`}>

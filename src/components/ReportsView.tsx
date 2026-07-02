@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { TimeEntry } from '../types';
 import { clientColorClasses } from '../colors';
@@ -23,24 +23,23 @@ function fmtDate(iso: string): string {
 }
 
 export default function ReportsView() {
-  const { clients, entries, isDark, currentMonth } = useStore();
+  const { clients, isDark, currentMonth, readMonthEntries } = useStore();
 
   const now = new Date();
   const [year, setYear] = useState(currentMonth.year);
   const [month, setMonth] = useState(currentMonth.month);
   const [clientId, setClientId] = useState<string>('all');
+  const [monthEntries, setMonthEntries] = useState<TimeEntry[]>([]);
 
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i);
 
-  // Filter entries by month + client (entries already loaded for currentMonth in store,
-  // but entries are per-month JSON — we filter by date string to be safe)
+  useEffect(() => {
+    readMonthEntries(year, month).then(setMonthEntries);
+  }, [year, month, readMonthEntries]);
+
   const filtered = useMemo<TimeEntry[]>(() => {
-    const prefix = `${year}-${String(month).padStart(2, '0')}`;
-    return entries.filter(e =>
-      e.date.startsWith(prefix) &&
-      (clientId === 'all' || e.clientId === clientId)
-    );
-  }, [entries, year, month, clientId]);
+    return monthEntries.filter(e => clientId === 'all' || e.clientId === clientId);
+  }, [monthEntries, clientId]);
 
   // Project totals grouped by (clientId, project)
   const projectTotals = useMemo(() => {

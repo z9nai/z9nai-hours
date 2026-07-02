@@ -24,6 +24,7 @@ interface StoreCtx {
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
   setMonth: (year: number, month: number) => void;
+  readMonthEntries: (year: number, month: number) => Promise<TimeEntry[]>;
 }
 
 const Ctx = createContext<StoreCtx>(null!);
@@ -229,6 +230,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setEntries(prev => { const u = prev.filter(x => x.id !== id); saveMonthEntries(u); return u; });
   }, [saveMonthEntries]);
 
+  const readMonthEntries = useCallback(async (year: number, month: number): Promise<TimeEntry[]> => {
+    if (!dirRef.current) return [];
+    const md = await readJson<MonthData>(dirRef.current, monthKey(year, month), { year, month, entries: [] });
+    return md.entries;
+  }, []);
+
   const toggleTheme = () => setIsDark(d => !d);
 
   useEffect(() => {
@@ -239,7 +246,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     <Ctx.Provider value={{
       company, clients, entries, dirHandle, savedHandleAvailable, isDark, currentMonth,
       setCompany, setClients, addEntry, updateEntry, deleteEntry,
-      pickDirectory, reconnectDirectory, toggleTheme, setMonth,
+      pickDirectory, reconnectDirectory, toggleTheme, setMonth, readMonthEntries,
     }}>
       {children}
     </Ctx.Provider>
