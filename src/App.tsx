@@ -56,6 +56,9 @@ export default function App() {
     <div className={`flex flex-col h-screen ${bg} ${textBase}`}>
       {/* Top bar */}
       <div className={`flex items-center gap-3 px-4 py-2 border-b ${border} ${topBg} flex-shrink-0`}>
+        <a href="https://z9nai.ch" target="_blank" rel="noopener noreferrer" className="flex-shrink-0 mr-1 opacity-80 hover:opacity-100 transition-opacity">
+          <img src="favicon.png" alt="Z9nAI" className="w-6 h-6" />
+        </a>
         <span className={`text-xs font-bold tracking-widest mr-4 ${isDark ? 'text-white/70' : 'text-black/70'}`}>
           Z9nAI Hours
         </span>
