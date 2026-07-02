@@ -6,7 +6,7 @@ import { clientColorClasses } from '../colors';
 
 const HOUR_START = 5;
 const HOUR_END = 23;
-const SLOT_HEIGHT = 16; // px per 15-min slot
+const SLOT_HEIGHT = 26; // px per 15-min slot
 const TOTAL_SLOTS = (HOUR_END - HOUR_START) * 4;
 const TIME_COL_W = 44;
 const HANDLE_PX = 5; // resize handle height in px
@@ -334,6 +334,19 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
   const textMuted = isDark ? 'text-white/30' : 'text-black/30';
   const headerBg  = isDark ? 'bg-[#14151a]' : 'bg-[#ededea]';
 
+  // ── Day / week totals ─────────────────────────────────────────────────────
+  const entryMins = (e: TimeEntry) => {
+    const [sh, sm] = e.startTime.split(':').map(Number);
+    const [eh, em] = e.endTime.split(':').map(Number);
+    return (eh * 60 + em) - (sh * 60 + sm);
+  };
+  const dayMins = days.map(d => {
+    const iso = dateToISO(d);
+    return entries.filter(e => e.date === iso).reduce((s, e) => s + entryMins(e), 0);
+  });
+  const weekMins = dayMins.reduce((s, m) => s + m, 0);
+  const fmtMins = (m: number) => m === 0 ? '' : m % 60 === 0 ? `${m / 60}h` : `${Math.floor(m / 60)}h ${m % 60}m`;
+
   const monthYear = (() => {
     const months = new Set(days.map(d => d.getMonth()));
     if (months.size === 1) return `${MONTH_NAMES[days[0].getMonth()]} ${days[0].getFullYear()}`;
@@ -353,9 +366,14 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           onClick={() => setWeekOffset(w => w + 1)}
           className={`p-1 rounded hover:bg-white/10 transition-colors ${isDark ? 'text-white/60 hover:text-white' : 'text-black/50 hover:text-black'}`}
         ><ChevronRight size={16} /></button>
+        {weekMins > 0 && (
+          <span className={`ml-auto text-[11px] tabular-nums font-medium ${isDark ? 'text-white/40' : 'text-black/40'}`}>
+            {fmtMins(weekMins)}
+          </span>
+        )}
         <button
           onClick={() => setWeekOffset(0)}
-          className={`ml-auto text-[10px] px-2 py-0.5 rounded border transition-colors ${isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'}`}
+          className={`${weekMins > 0 ? '' : 'ml-auto '}text-[10px] px-2 py-0.5 rounded border transition-colors ${isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'}`}
         >Heute</button>
       </div>
 
@@ -364,10 +382,16 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
         {days.map((d, i) => {
           const iso = dateToISO(d);
           const isToday = iso === today;
+          const dayTotal = fmtMins(dayMins[i]);
           return (
             <div key={i} className={`flex-1 text-center py-1.5 text-xs ${isToday ? (isDark ? 'text-blue-400' : 'text-blue-600') : textMuted}`}>
               <div className="font-semibold truncate px-1">{DAY_NAMES[i]}</div>
               <div className={`text-[11px] ${isToday ? 'font-bold' : ''}`}>{d.getDate()}</div>
+              {dayTotal && (
+                <div className={`text-[10px] tabular-nums mt-0.5 ${isToday ? (isDark ? 'text-blue-400/70' : 'text-blue-600/70') : (isDark ? 'text-white/20' : 'text-black/20')}`}>
+                  {dayTotal}
+                </div>
+              )}
             </div>
           );
         })}
