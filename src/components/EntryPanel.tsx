@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
@@ -17,8 +17,49 @@ for (let h = 0; h < 24; h++)
   for (let m = 0; m < 60; m += 15)
     TIMES.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
 
+function ProjectInput({ value, onChange, suggestions, isDark, inputCls }: {
+  value: string; onChange: (v: string) => void; suggestions: string[]; isDark: boolean; inputCls: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const filtered = suggestions.filter(s => s !== value &&
+    (value === '' || s.toLowerCase().includes(value.toLowerCase())));
+  const dropCls = isDark
+    ? 'bg-[#1c1d22] border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.5)]'
+    : 'bg-white border-black/10 shadow-[0_4px_16px_rgba(0,0,0,0.12)]';
+  const itemCls = isDark
+    ? 'text-white/70 hover:bg-white/8 hover:text-white'
+    : 'text-black/70 hover:bg-black/5 hover:text-black';
+  return (
+    <div className="relative">
+      <input type="text" placeholder="Projektbezeichnung" value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`} />
+      {open && filtered.length > 0 && (
+        <div className={`absolute left-0 right-0 top-full mt-1 rounded border z-30 overflow-hidden ${dropCls}`}>
+          {filtered.map(s => (
+            <button key={s} type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { onChange(s); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${itemCls}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function EntryPanel({ entry, onClose }: Props) {
-  const { clients, addEntry, updateEntry, deleteEntry, isDark } = useStore();
+  const { clients, entries, addEntry, updateEntry, deleteEntry, isDark } = useStore();
+
+  const knownProjects = useMemo(() => {
+    const set = new Set<string>();
+    entries.forEach(e => { if (e.project) set.add(e.project); });
+    return Array.from(set).sort();
+  }, [entries]);
   const isNew = !entry.id;
 
   const [form, setForm] = useState({
@@ -132,9 +173,8 @@ export default function EntryPanel({ entry, onClose }: Props) {
         {/* Project */}
         <div>
           <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Projekt</label>
-          <input type="text" placeholder="Projektbezeichnung" value={form.project}
-            onChange={e => set('project', e.target.value)}
-            className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`} />
+          <ProjectInput value={form.project} onChange={v => set('project', v)}
+            suggestions={knownProjects} isDark={isDark} inputCls={inputCls} />
         </div>
 
         {/* Description */}
