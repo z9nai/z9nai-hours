@@ -70,7 +70,12 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
         <Field label="Firmenname" value={f.name} onChange={v => setTop('name', v)} placeholder="Acme AG" isDark={isDark} />
         <Field label="UID" value={f.uid} onChange={v => setTop('uid', v)} placeholder="CHE-123.456.789" isDark={isDark} />
       </div>
-      <ColorPicker value={f.color || DEFAULT_COLOR} onChange={v => setTop('color', v)} isDark={isDark} />
+      <div className="grid grid-cols-2 gap-3 items-end">
+        <Field label="Stundensatz (CHF)" value={f.hourlyRate != null ? String(f.hourlyRate) : ''}
+          onChange={v => setF(p => ({ ...p, hourlyRate: v.trim() === '' ? undefined : Number(v.replace(',', '.')) || 0 }))}
+          placeholder="150" isDark={isDark} />
+        <ColorPicker value={f.color || DEFAULT_COLOR} onChange={v => setTop('color', v)} isDark={isDark} />
+      </div>
       <div className="grid grid-cols-3 gap-3">
         <div className="col-span-2">
           <Field label="Strasse" value={f.address.street} onChange={v => setAddr('street', v)} placeholder="Musterstrasse 1" isDark={isDark} />
@@ -163,6 +168,7 @@ export default function ClientsView() {
                       <div className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-black'}`}>{c.name}</div>
                       <div className={`text-[11px] mt-0.5 ${textMuted}`}>
                         {c.uid && <span className="mr-3">{c.uid}</span>}
+                        {c.hourlyRate != null && <span className="mr-3">CHF {c.hourlyRate}/h</span>}
                         {c.address.street && <span>{c.address.street}, {c.address.zip} {c.address.city}</span>}
                       </div>
                       {c.contact.name && (

@@ -22,6 +22,10 @@ function fmtDate(iso: string): string {
   return d.toLocaleDateString('de-CH', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+function fmtChf(amount: number): string {
+  return `CHF ${amount.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function ReportsView() {
   const { clients, isDark, currentMonth, readMonthEntries } = useStore();
 
@@ -55,6 +59,15 @@ export default function ReportsView() {
   }, [filtered]);
 
   const grandTotal = useMemo(() => projectTotals.reduce((s, r) => s + r.mins, 0), [projectTotals]);
+
+  // CHF amount per row (null when the client has no hourly rate)
+  const rowAmount = (row: { clientId: string; mins: number }): number | null => {
+    const rate = clients.find(c => c.id === row.clientId)?.hourlyRate;
+    return rate != null ? (row.mins / 60) * rate : null;
+  };
+  const amounts = projectTotals.map(rowAmount);
+  const hasAnyRate = amounts.some(a => a != null);
+  const grandAmount = amounts.reduce<number>((s, a) => s + (a ?? 0), 0);
 
   // Group by date
   const byDay = useMemo(() => {
@@ -124,6 +137,11 @@ export default function ReportsView() {
                       <td className={`px-4 py-2 text-xs text-right tabular-nums ${isDark ? 'text-white/50' : 'text-black/50'}`}>
                         {fmtDuration(row.mins)}
                       </td>
+                      {hasAnyRate && (
+                        <td className={`px-4 py-2 text-xs text-right tabular-nums ${isDark ? 'text-white/50' : 'text-black/50'}`}>
+                          {amounts[i] != null ? fmtChf(amounts[i]!) : '—'}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -132,6 +150,11 @@ export default function ReportsView() {
                   <td className={`px-4 py-2.5 text-xs font-semibold text-right tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
                     {fmtDuration(grandTotal)}
                   </td>
+                  {hasAnyRate && (
+                    <td className={`px-4 py-2.5 text-xs font-semibold text-right tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
+                      {fmtChf(grandAmount)}
+                    </td>
+                  )}
                 </tr>
               </tbody>
             </table>

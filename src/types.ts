@@ -27,6 +27,7 @@ export interface Client {
   address: Address;
   contact: ContactPerson;
   color: string; // key from CLIENT_COLORS palette
+  hourlyRate?: number; // CHF per hour
 }
 
 export interface TimeEntry {
