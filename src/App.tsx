@@ -117,11 +117,9 @@ export default function App() {
             <div className="flex-1 overflow-hidden">
               <Calendar onSelect={handleSelect} onEditEntry={handleEditEntry} selectedId={selectedId} pendingEntry={panelEntry?.id ? null : panelEntry} />
             </div>
-            {panelEntry && (
-              <div className="w-72 flex-shrink-0 overflow-hidden">
-                <EntryPanel entry={panelEntry} onClose={handleClosePanel} />
-              </div>
-            )}
+            <div className="w-72 flex-shrink-0 overflow-hidden">
+              <EntryPanel entry={panelEntry} onClose={handleClosePanel} onNew={handleSelect} />
+            </div>
           </>
         ) : view === 'clients' ? (
           <div className="flex-1 overflow-y-auto">

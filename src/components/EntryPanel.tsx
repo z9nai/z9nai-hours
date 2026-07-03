@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Trash2, X } from 'lucide-react';
+import { CalendarPlus, MousePointerClick, Trash2, X } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
 
+type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
+
 interface Props {
-  entry: Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
+  entry: PanelEntry | null;
   onClose: () => void;
+  onNew: (entry: PanelEntry) => void;
 }
 
 function genId() {
@@ -52,7 +55,49 @@ function ProjectInput({ value, onChange, suggestions, isDark, inputCls }: {
   );
 }
 
-export default function EntryPanel({ entry, onClose }: Props) {
+export default function EntryPanel({ entry, onClose, onNew }: Props) {
+  const { isDark } = useStore();
+
+  if (!entry) {
+    const newForToday = () => {
+      const now = new Date();
+      const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const h = Math.min(Math.max(now.getHours(), 5), 22);
+      const start = `${String(h).padStart(2, '0')}:00`;
+      const end = `${String(h + 1).padStart(2, '0')}:00`;
+      onNew({ date: iso, startTime: start, endTime: end });
+    };
+    const bg = isDark ? 'bg-[#14151a] border-white/8' : 'bg-[#ededea] border-black/8';
+    const muted = isDark ? 'text-white/30' : 'text-black/30';
+    return (
+      <div className={`flex flex-col h-full border-l ${bg}`}>
+        <div className={`flex items-center px-4 py-3 border-b ${isDark ? 'border-white/8' : 'border-black/8'}`}>
+          <span className={`text-xs font-semibold uppercase tracking-widest ${isDark ? 'text-white/50' : 'text-black/50'}`}>
+            Eintrag
+          </span>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
+          <MousePointerClick size={20} className={muted} />
+          <p className={`text-[11px] leading-relaxed ${muted}`}>
+            Ziehe im Kalender über einen Zeitraum,<br />
+            um einen neuen Eintrag zu erstellen.<br />
+            Klicke auf einen Eintrag, um ihn zu bearbeiten.
+          </p>
+          <button onClick={newForToday}
+            className={`mt-2 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border transition-colors ${
+              isDark ? 'border-white/15 text-white/50 hover:border-white/30 hover:text-white' : 'border-black/15 text-black/50 hover:border-black/30 hover:text-black'
+            }`}>
+            <CalendarPlus size={12} /> Neuer Eintrag
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return <EntryForm entry={entry} onClose={onClose} />;
+}
+
+function EntryForm({ entry, onClose }: { entry: PanelEntry; onClose: () => void }) {
   const { clients, entries, addEntry, updateEntry, deleteEntry, isDark } = useStore();
 
   const knownProjects = useMemo(() => {
