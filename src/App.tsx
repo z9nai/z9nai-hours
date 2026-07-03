@@ -115,7 +115,7 @@ export default function App() {
         {view === 'calendar' ? (
           <>
             <div className="flex-1 overflow-hidden">
-              <Calendar onSelect={handleSelect} onEditEntry={handleEditEntry} selectedId={selectedId} />
+              <Calendar onSelect={handleSelect} onEditEntry={handleEditEntry} selectedId={selectedId} pendingEntry={panelEntry?.id ? null : panelEntry} />
             </div>
             {panelEntry && (
               <div className="w-72 flex-shrink-0 overflow-hidden">
