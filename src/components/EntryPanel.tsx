@@ -100,11 +100,6 @@ export default function EntryPanel({ entry, onClose, onNew }: Props) {
 function EntryForm({ entry, onClose }: { entry: PanelEntry; onClose: () => void }) {
   const { clients, entries, addEntry, updateEntry, deleteEntry, isDark } = useStore();
 
-  const knownProjects = useMemo(() => {
-    const set = new Set<string>();
-    entries.forEach(e => { if (e.project) set.add(e.project); });
-    return Array.from(set).sort();
-  }, [entries]);
   const isNew = !entry.id;
 
   const [form, setForm] = useState({
@@ -126,6 +121,12 @@ function EntryForm({ entry, onClose }: { entry: PanelEntry; onClose: () => void 
       description: entry.description ?? '',
     });
   }, [entry, clients]);
+
+  const knownProjects = useMemo(() => {
+    const set = new Set<string>();
+    entries.forEach(e => { if (e.project && e.clientId === form.clientId) set.add(e.project); });
+    return Array.from(set).sort();
+  }, [entries, form.clientId]);
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
