@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Pencil, X } from 'lucide-react';
-import { Client, Address, ContactPerson } from '../types';
+import { Client, Address, ContactPerson, CcRecipient } from '../types';
 import { useStore } from '../store';
 import { CLIENT_COLORS, DEFAULT_COLOR } from '../colors';
 
@@ -92,12 +92,39 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
         <Field label="E-Mail" value={f.contact.email} onChange={v => setContact('email', v)} isDark={isDark} />
         <Field label="Telefon" value={f.contact.phone} onChange={v => setContact('phone', v)} isDark={isDark} />
       </div>
+
+      <div className={`flex items-center justify-between pt-1`}>
+        <span className={`text-[10px] uppercase tracking-wider ${labelCls}`}>Rechnung CC</span>
+        <button type="button"
+          onClick={() => setF(p => ({ ...p, cc: [...(p.cc ?? []), { name: '', email: '' }] }))}
+          className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded border transition-colors ${
+            isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'
+          }`}>
+          <Plus size={10} /> CC hinzufügen
+        </button>
+      </div>
+      {(f.cc ?? []).map((cc, i) => (
+        <div key={i} className="grid grid-cols-[1fr_1.4fr_auto] gap-3 items-end">
+          <Field label="Name" value={cc.name}
+            onChange={v => setF(p => ({ ...p, cc: (p.cc ?? []).map((c, j) => j === i ? { ...c, name: v } : c) }))}
+            placeholder="Max Muster" isDark={isDark} />
+          <Field label="E-Mail" value={cc.email}
+            onChange={v => setF(p => ({ ...p, cc: (p.cc ?? []).map((c, j) => j === i ? { ...c, email: v } : c) }))}
+            placeholder="max@acme.ch" isDark={isDark} />
+          <button type="button"
+            onClick={() => setF(p => ({ ...p, cc: (p.cc ?? []).filter((_, j) => j !== i) }))}
+            className={`p-2 mb-0.5 rounded transition-colors ${isDark ? 'text-white/25 hover:text-red-400' : 'text-black/25 hover:text-red-500'}`}
+            title="CC entfernen">
+            <X size={12} />
+          </button>
+        </div>
+      ))}
       <div className="flex gap-2 pt-1">
         <button onClick={onCancel}
           className={`flex-1 text-xs py-2 rounded border transition-colors ${isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'}`}>
           Abbrechen
         </button>
-        <button onClick={() => f.name && onSave(f)}
+        <button onClick={() => f.name && onSave({ ...f, cc: (f.cc ?? []).filter(c => c.name.trim() || c.email.trim()) })}
           className={`flex-1 text-xs py-2 rounded font-semibold transition-colors ${btnPrimary}`}>
           Speichern
         </button>
@@ -174,6 +201,11 @@ export default function ClientsView() {
                       {c.contact.name && (
                         <div className={`text-[11px] mt-1 ${textMuted}`}>
                           {c.contact.name}{c.contact.email && ` · ${c.contact.email}`}{c.contact.phone && ` · ${c.contact.phone}`}
+                        </div>
+                      )}
+                      {(c.cc?.length ?? 0) > 0 && (
+                        <div className={`text-[11px] mt-1 ${textMuted}`}>
+                          CC: {c.cc!.map(r => r.name ? `${r.name} <${r.email}>` : r.email).join(', ')}
                         </div>
                       )}
                     </div>

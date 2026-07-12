@@ -20,6 +20,11 @@ export interface ContactPerson {
   phone: string;
 }
 
+export interface CcRecipient {
+  name: string;
+  email: string;
+}
+
 export interface Client {
   id: string;
   uid: string;
@@ -28,6 +33,7 @@ export interface Client {
   contact: ContactPerson;
   color: string; // key from CLIENT_COLORS palette
   hourlyRate?: number; // CHF per hour
+  cc?: CcRecipient[]; // additional invoice recipients (CC)
 }
 
 export interface TimeEntry {
