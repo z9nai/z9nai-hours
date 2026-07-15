@@ -12,14 +12,29 @@ type View = 'calendar' | 'clients' | 'reports' | 'company';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
+function genId() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 export default function App() {
-  const { isDark, toggleTheme, dirHandle, savedHandleAvailable, pickDirectory, reconnectDirectory } = useStore();
+  const { isDark, toggleTheme, dirHandle, savedHandleAvailable, pickDirectory, reconnectDirectory, clients, addEntry } = useStore();
   const [view, setView] = useState<View>('calendar');
-  const [panelEntry, setPanelEntry] = useState<PanelEntry | null>(null);
+  const [panelEntry, setPanelEntry] = useState<TimeEntry | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const handleSelect = (entry: PanelEntry) => {
-    setSelectedId(null);
+  // Drag selection (or "Neuer Eintrag") creates the entry immediately — auto-save
+  const handleSelect = (sel: PanelEntry) => {
+    const entry: TimeEntry = {
+      id: genId(),
+      clientId: sel.clientId ?? (clients[0]?.id ?? ''),
+      date: sel.date,
+      startTime: sel.startTime,
+      endTime: sel.endTime,
+      project: sel.project ?? '',
+      description: sel.description ?? '',
+    };
+    addEntry(entry);
+    setSelectedId(entry.id);
     setPanelEntry(entry);
   };
 
@@ -115,7 +130,7 @@ export default function App() {
         {view === 'calendar' ? (
           <>
             <div className="flex-1 overflow-hidden">
-              <Calendar onSelect={handleSelect} onEditEntry={handleEditEntry} selectedId={selectedId} pendingEntry={panelEntry?.id ? null : panelEntry} />
+              <Calendar onSelect={handleSelect} onEditEntry={handleEditEntry} selectedId={selectedId} />
             </div>
             <div className="w-72 flex-shrink-0 overflow-hidden">
               <EntryPanel entry={panelEntry} onClose={handleClosePanel} onNew={handleSelect} />

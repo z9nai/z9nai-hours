@@ -6,13 +6,9 @@ import { useStore } from '../store';
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
 interface Props {
-  entry: PanelEntry | null;
+  entry: TimeEntry | null;
   onClose: () => void;
   onNew: (entry: PanelEntry) => void;
-}
-
-function genId() {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 const TIMES: string[] = [];
@@ -97,30 +93,29 @@ export default function EntryPanel({ entry, onClose, onNew }: Props) {
   return <EntryForm entry={entry} onClose={onClose} />;
 }
 
-function EntryForm({ entry, onClose }: { entry: PanelEntry; onClose: () => void }) {
-  const { clients, entries, addEntry, updateEntry, deleteEntry, isDark } = useStore();
-
-  const isNew = !entry.id;
+function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }) {
+  const { clients, entries, updateEntry, deleteEntry, isDark } = useStore();
 
   const [form, setForm] = useState({
-    clientId: entry.clientId ?? (clients[0]?.id ?? ''),
+    clientId: entry.clientId,
     date: entry.date,
     startTime: entry.startTime,
     endTime: entry.endTime,
-    project: entry.project ?? '',
-    description: entry.description ?? '',
+    project: entry.project,
+    description: entry.description,
   });
 
+  // Reset the form when a different entry is opened
   useEffect(() => {
     setForm({
-      clientId: entry.clientId ?? (clients[0]?.id ?? ''),
+      clientId: entry.clientId,
       date: entry.date,
       startTime: entry.startTime,
       endTime: entry.endTime,
-      project: entry.project ?? '',
-      description: entry.description ?? '',
+      project: entry.project,
+      description: entry.description,
     });
-  }, [entry, clients]);
+  }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const knownProjects = useMemo(() => {
     const set = new Set<string>();
@@ -128,17 +123,16 @@ function EntryForm({ entry, onClose }: { entry: PanelEntry; onClose: () => void 
     return Array.from(set).sort();
   }, [entries, form.clientId]);
 
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
-
-  const save = () => {
-    if (!form.clientId || !form.date || !form.startTime || !form.endTime) return;
-    const e: TimeEntry = { id: entry.id ?? genId(), ...form };
-    if (isNew) addEntry(e); else updateEntry(e);
-    onClose();
+  // Auto-save: every change updates the entry immediately (disk write is debounced in the store)
+  const set = (k: string, v: string) => {
+    const next = { ...form, [k]: v };
+    setForm(next);
+    updateEntry({ id: entry.id, ...next });
   };
 
   const remove = () => {
-    if (entry.id) { deleteEntry(entry.id); onClose(); }
+    deleteEntry(entry.id);
+    onClose();
   };
 
   const bg = isDark ? 'bg-[#14151a] border-white/8' : 'bg-[#ededea] border-black/8';
@@ -146,16 +140,13 @@ function EntryForm({ entry, onClose }: { entry: PanelEntry; onClose: () => void 
     ? 'bg-white/5 border-white/10 text-white placeholder-white/20 focus:border-white/30'
     : 'bg-black/5 border-black/10 text-black placeholder-black/20 focus:border-black/30';
   const labelCls = isDark ? 'text-white/40' : 'text-black/40';
-  const btnPrimary = isDark
-    ? 'bg-white text-black hover:bg-white/90'
-    : 'bg-black text-white hover:bg-black/80';
 
   return (
     <div className={`flex flex-col h-full border-l ${bg}`}>
       {/* Header */}
       <div className={`flex items-center justify-between px-4 py-3 border-b ${isDark ? 'border-white/8' : 'border-black/8'}`}>
         <span className={`text-xs font-semibold uppercase tracking-widest ${isDark ? 'text-white/50' : 'text-black/50'}`}>
-          {isNew ? 'Neuer Eintrag' : 'Eintrag bearbeiten'}
+          Eintrag
         </span>
         <button onClick={onClose} className={`p-1 rounded transition-colors ${isDark ? 'text-white/30 hover:text-white/70' : 'text-black/30 hover:text-black/70'}`}>
           <X size={14} />
@@ -233,20 +224,15 @@ function EntryForm({ entry, onClose }: { entry: PanelEntry; onClose: () => void 
       </div>
 
       {/* Actions */}
-      <div className={`px-4 py-3 border-t flex gap-2 ${isDark ? 'border-white/8' : 'border-black/8'}`}>
-        {!isNew && (
-          <button onClick={remove}
-            className={`p-2 rounded transition-colors ${isDark ? 'text-white/30 hover:text-red-400' : 'text-black/30 hover:text-red-500'}`}>
-            <Trash2 size={14} />
-          </button>
-        )}
-        <button onClick={onClose}
-          className={`flex-1 text-xs py-2 rounded border transition-colors ${isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'}`}>
-          Abbrechen
-        </button>
-        <button onClick={save}
-          className={`flex-1 text-xs py-2 rounded font-semibold transition-colors ${btnPrimary}`}>
-          {isNew ? 'Erstellen' : 'Speichern'}
+      <div className={`px-4 py-3 border-t flex items-center justify-between ${isDark ? 'border-white/8' : 'border-black/8'}`}>
+        <span className={`text-[10px] ${isDark ? 'text-white/25' : 'text-black/25'}`}>
+          Änderungen werden automatisch gespeichert
+        </span>
+        <button onClick={remove} title="Eintrag löschen"
+          className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border transition-colors ${
+            isDark ? 'border-white/15 text-white/40 hover:border-red-400/50 hover:text-red-400' : 'border-black/15 text-black/40 hover:border-red-500/50 hover:text-red-500'
+          }`}>
+          <Trash2 size={12} /> Löschen
         </button>
       </div>
     </div>

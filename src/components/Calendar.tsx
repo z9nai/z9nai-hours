@@ -107,10 +107,9 @@ interface Props {
   onSelect: (entry: PanelEntry) => void;
   onEditEntry: (entry: TimeEntry) => void;
   selectedId: string | null;
-  pendingEntry: PanelEntry | null;
 }
 
-export default function Calendar({ onSelect, onEditEntry, selectedId, pendingEntry }: Props) {
+export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
   const { entries, isDark, clients, addEntry, updateEntry, currentMonth, setMonth, readMonthEntries } = useStore();
   const [weekOffset, setWeekOffset] = useState(0);
   const days = getWeekDays(weekOffset);
@@ -508,28 +507,6 @@ export default function Calendar({ onSelect, onEditEntry, selectedId, pendingEnt
                   );
                 })()}
 
-                {/* Persistent pending entry (after release, until saved/cancelled) */}
-                {pendingEntry && !pendingEntry.id && !ia && (() => {
-                  const entryDayIdx = days.findIndex(d => dateToISO(d) === pendingEntry.date);
-                  if (entryDayIdx !== dayIdx) return null;
-                  const s = timeToSlot(pendingEntry.startTime);
-                  const e = timeToSlot(pendingEntry.endTime);
-                  return (
-                    <div
-                      className="absolute left-0.5 right-0.5 rounded pointer-events-none z-10"
-                      style={{
-                        top: s * SLOT_HEIGHT,
-                        height: Math.max((e - s) * SLOT_HEIGHT, SLOT_HEIGHT),
-                        background: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)',
-                        border: `1px dashed ${isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.18)'}`,
-                      }}
-                    >
-                      <div className={`px-1 pt-0.5 text-[9px] leading-tight ${isDark ? 'text-white/45' : 'text-black/40'}`}>
-                        {pendingEntry.startTime}–{pendingEntry.endTime}
-                      </div>
-                    </div>
-                  );
-                })()}
 
                 {/* Time entries */}
                 {dayEntries.map(entry => {

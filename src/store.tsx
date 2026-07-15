@@ -190,19 +190,42 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentMonth, activateDir]);
 
+  // Debounced disk write: rapid successive changes (e.g. typing in the panel)
+  // collapse into one write. A pending write for a DIFFERENT month is flushed
+  // immediately so it can never be lost on month switch.
+  const pendingWriteRef = useRef<{ key: string; md: MonthData } | null>(null);
+  const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPendingWrite = useCallback(() => {
+    const p = pendingWriteRef.current;
+    pendingWriteRef.current = null;
+    if (writeTimerRef.current) { clearTimeout(writeTimerRef.current); writeTimerRef.current = null; }
+    if (p && dirRef.current) writeJson(dirRef.current, p.key, p.md);
+  }, []);
+
   const setMonth = useCallback(async (year: number, month: number) => {
+    flushPendingWrite();
     setCurrentMonth({ year, month });
     if (dirRef.current) {
       const md = await readJson<MonthData>(dirRef.current, monthKey(year, month), { year, month, entries: [] });
       setEntries(md.entries);
     }
-  }, []);
+  }, [flushPendingWrite]);
 
-  const saveMonthEntries = useCallback(async (updated: TimeEntry[]) => {
+  const saveMonthEntries = useCallback((updated: TimeEntry[]) => {
     if (!dirRef.current) return;
-    const md: MonthData = { year: currentMonth.year, month: currentMonth.month, entries: updated };
-    await writeJson(dirRef.current, monthKey(currentMonth.year, currentMonth.month), md);
-  }, [currentMonth]);
+    const key = monthKey(currentMonth.year, currentMonth.month);
+    if (pendingWriteRef.current && pendingWriteRef.current.key !== key) flushPendingWrite();
+    pendingWriteRef.current = { key, md: { year: currentMonth.year, month: currentMonth.month, entries: updated } };
+    if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
+    writeTimerRef.current = setTimeout(flushPendingWrite, 400);
+  }, [currentMonth, flushPendingWrite]);
+
+  // Flush on tab close so no debounced change is lost
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushPendingWrite);
+    return () => window.removeEventListener('beforeunload', flushPendingWrite);
+  }, [flushPendingWrite]);
 
   const setCompany = useCallback(async (c: Company) => {
     setCompanyState(c);
@@ -232,9 +255,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const readMonthEntries = useCallback(async (year: number, month: number): Promise<TimeEntry[]> => {
     if (!dirRef.current) return [];
+    flushPendingWrite();
     const md = await readJson<MonthData>(dirRef.current, monthKey(year, month), { year, month, entries: [] });
     return md.entries;
-  }, []);
+  }, [flushPendingWrite]);
 
   const toggleTheme = () => setIsDark(d => !d);
 
