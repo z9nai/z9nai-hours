@@ -26,6 +26,24 @@ function fmtChf(amount: number): string {
   return `CHF ${amount.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function fmtIso(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+// All (year, month) pairs between two ISO dates, capped at 36 months
+function monthsBetween(fromISO: string, toISO: string): { y: number; m: number }[] {
+  const [fy, fm] = fromISO.split('-').map(Number);
+  const [ty, tm] = toISO.split('-').map(Number);
+  const out: { y: number; m: number }[] = [];
+  let y = fy, m = fm;
+  while ((y < ty || (y === ty && m <= tm)) && out.length < 36) {
+    out.push({ y, m });
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
 export default function ReportsView() {
   const { clients, isDark, currentMonth, readMonthEntries } = useStore();
 
@@ -40,6 +58,32 @@ export default function ReportsView() {
   useEffect(() => {
     readMonthEntries(year, month).then(setMonthEntries);
   }, [year, month, readMonthEntries]);
+
+  // ── Kontingent usage: per client with quota, minutes used per month in the period ──
+  const [quotaUsage, setQuotaUsage] = useState<Record<string, { y: number; m: number; mins: number }[]>>({});
+
+  useEffect(() => {
+    const withQuota = clients.filter(c => c.quota && c.quota.hours > 0 && c.quota.from && c.quota.to);
+    if (withQuota.length === 0) { setQuotaUsage({}); return; }
+    let cancelled = false;
+    (async () => {
+      const result: Record<string, { y: number; m: number; mins: number }[]> = {};
+      for (const c of withQuota) {
+        const q = c.quota!;
+        const rows: { y: number; m: number; mins: number }[] = [];
+        for (const { y, m } of monthsBetween(q.from, q.to)) {
+          const es = await readMonthEntries(y, m);
+          const mins = es
+            .filter(e => e.clientId === c.id && e.date >= q.from && e.date <= q.to)
+            .reduce((s, e) => s + parseMins(e.endTime) - parseMins(e.startTime), 0);
+          rows.push({ y, m, mins });
+        }
+        result[c.id] = rows;
+      }
+      if (!cancelled) setQuotaUsage(result);
+    })();
+    return () => { cancelled = true; };
+  }, [clients, readMonthEntries, monthEntries]);
 
   const filtered = useMemo<TimeEntry[]>(() => {
     return monthEntries.filter(e => clientId === 'all' || e.clientId === clientId);
@@ -109,6 +153,110 @@ export default function ReportsView() {
           </select>
         </div>
       </div>
+
+      {/* ── Kontingent / Kostendach ── */}
+      {clients
+        .filter(c => c.quota && quotaUsage[c.id] && (clientId === 'all' || c.id === clientId))
+        .map(c => {
+          const q = c.quota!;
+          const rows = quotaUsage[c.id];
+          const quotaMins = Math.round(q.hours * 60);
+          const colorCls = clientColorClasses(c.color);
+          // Monthly budget = total quota split evenly across the period's months
+          const monthlyQuotaMins = rows.length > 0 ? quotaMins / rows.length : 0;
+          const nowD = new Date();
+          const curY = nowD.getFullYear(), curM = nowD.getMonth() + 1;
+          // Listed: past + current month. Consolidated: only fully completed months.
+          const listedRows = rows.filter(r => r.y < curY || (r.y === curY && r.m <= curM));
+          const completedRows = listedRows.filter(r => r.y < curY || (r.y === curY && r.m < curM));
+          const usedMins = completedRows.reduce((s, r) => s + r.mins, 0);
+          // Elapsed portion of the quota (period start up to previous month)
+          const elapsedQuotaMins = monthlyQuotaMins * completedRows.length;
+          const elapsedPct = elapsedQuotaMins > 0 ? (usedMins / elapsedQuotaMins) * 100 : 0;
+          const elapsedOver = completedRows.length > 0 && usedMins > elapsedQuotaMins;
+          const yy = (y: number) => String(y).slice(2);
+          const firstRow = completedRows[0];
+          const lastRow = completedRows[completedRows.length - 1];
+          const elapsedLabel = firstRow && lastRow
+            ? `${MONTH_NAMES[firstRow.m - 1]} ${yy(firstRow.y)} bis ${MONTH_NAMES[lastRow.m - 1]} ${yy(lastRow.y)}`
+            : null;
+          return (
+            <div key={c.id} className={`rounded-xl border ${border} overflow-hidden mb-6`}>
+              <div className={`flex items-center justify-between px-4 py-2 ${isDark ? 'bg-white/2' : 'bg-black/2'}`}>
+                <span className={`flex items-center gap-1.5 text-[10px] uppercase tracking-widest ${muted}`}>
+                  <span className={`inline-block w-2 h-2 rounded-full ${colorCls.dot}`} />
+                  Kontingent {c.name}
+                </span>
+                <span className={`text-[10px] tabular-nums ${muted}`}>
+                  {fmtIso(q.from)} – {fmtIso(q.to)}
+                </span>
+              </div>
+              <div className="px-4 py-3">
+                {/* Progress bar: usage vs elapsed quota (months so far × monthly quota) */}
+                <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-white/8' : 'bg-black/8'}`}>
+                  <div
+                    className={`h-full rounded-full ${elapsedOver ? 'bg-red-500' : colorCls.dot}`}
+                    style={{ width: `${Math.min(elapsedPct, 100)}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                  <span className={`text-xs ${isDark ? 'text-white/70' : 'text-black/70'}`}>
+                    {fmtDuration(usedMins)} von {fmtDuration(Math.round(elapsedQuotaMins))} ({elapsedPct.toFixed(1)}%)
+                  </span>
+                  <span className={`text-xs tabular-nums font-medium ${elapsedOver ? 'text-red-400' : isDark ? 'text-white/50' : 'text-black/50'}`}>
+                    {elapsedOver
+                      ? `${fmtDuration(Math.round(usedMins - elapsedQuotaMins))} überzogen`
+                      : elapsedLabel ?? ''}
+                  </span>
+                </div>
+              </div>
+              {/* Per-month breakdown: bar = usage vs monthly share of the quota */}
+              <div className={`px-4 pb-1 text-[10px] ${muted}`}>
+                Kontingent Total: {fmtDuration(quotaMins)} | Monatskontingent: {fmtDuration(Math.round(monthlyQuotaMins))}
+              </div>
+              {listedRows.map(r => {
+                const mPct = monthlyQuotaMins > 0 ? (r.mins / monthlyQuotaMins) * 100 : 0;
+                const mOver = r.mins > monthlyQuotaMins;
+                const isCurrent = r.y === curY && r.m === curM;
+                return (
+                  <div key={`${r.y}-${r.m}`} className={`flex items-center gap-3 px-4 py-1.5 border-t ${border}`}>
+                    <span className={`w-32 flex-shrink-0 text-xs ${isCurrent ? (isDark ? 'text-white font-semibold' : 'text-black font-semibold') : (isDark ? 'text-white/60' : 'text-black/60')}`}>
+                      {MONTH_NAMES[r.m - 1]} {r.y}
+                    </span>
+                    <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-white/8' : 'bg-black/8'}`}>
+                      <div
+                        className={`h-full rounded-full ${mOver ? 'bg-red-500' : colorCls.dot}`}
+                        style={{ width: `${Math.min(mPct, 100)}%` }}
+                      />
+                    </div>
+                    <span className={`w-20 flex-shrink-0 text-right text-xs tabular-nums ${isDark ? 'text-white/50' : 'text-black/50'}`}>
+                      {fmtDuration(r.mins)}
+                    </span>
+                    <span className={`w-12 flex-shrink-0 text-right text-[10px] tabular-nums ${mOver ? 'text-red-400' : muted}`}>
+                      {mPct.toFixed(0)}%
+                    </span>
+                  </div>
+                );
+              })}
+              {/* Total: bar = total usage vs elapsed quota (period start up to current month) */}
+              <div className={`flex items-center gap-3 px-4 py-2 border-t-2 ${isDark ? 'border-white/15' : 'border-black/15'}`}>
+                <span className={`w-32 flex-shrink-0 text-xs font-semibold ${isDark ? 'text-white' : 'text-black'}`}>Total</span>
+                <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-white/8' : 'bg-black/8'}`}>
+                  <div
+                    className={`h-full rounded-full ${elapsedOver ? 'bg-red-500' : colorCls.dot}`}
+                    style={{ width: `${Math.min(elapsedPct, 100)}%` }}
+                  />
+                </div>
+                <span className={`w-20 flex-shrink-0 text-right text-xs font-semibold tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
+                  {fmtDuration(usedMins)}
+                </span>
+                <span className={`w-12 flex-shrink-0 text-right text-[10px] tabular-nums font-semibold ${elapsedOver ? 'text-red-400' : isDark ? 'text-white/70' : 'text-black/70'}`}>
+                  {elapsedPct.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
 
       {filtered.length === 0 ? (
         <p className={`text-sm ${muted}`}>Keine Einträge für diesen Zeitraum.</p>

@@ -10,6 +10,11 @@ const EMPTY_CLIENT: Omit<Client, 'id'> = { uid: '', name: '', color: DEFAULT_COL
 
 function genId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
+function fmtIso(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
 function Field({ label, value, onChange, placeholder, isDark }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; isDark: boolean;
 }) {
@@ -86,6 +91,32 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
         <Field label="Ort" value={f.address.city} onChange={v => setAddr('city', v)} placeholder="Zürich" isDark={isDark} />
         <Field label="Land" value={f.address.country} onChange={v => setAddr('country', v)} placeholder="CH" isDark={isDark} />
       </div>
+      <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Kontingent / Kostendach</div>
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="Stunden" value={f.quota ? String(f.quota.hours || '') : ''}
+          onChange={v => setF(p => {
+            const hours = v.trim() === '' ? 0 : Number(v.replace(',', '.')) || 0;
+            return { ...p, quota: { hours, from: p.quota?.from ?? '', to: p.quota?.to ?? '' } };
+          })}
+          placeholder="1500" isDark={isDark} />
+        <div>
+          <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Von</label>
+          <input type="date" value={f.quota?.from ?? ''}
+            onChange={e => setF(p => ({ ...p, quota: { hours: p.quota?.hours ?? 0, from: e.target.value, to: p.quota?.to ?? '' } }))}
+            className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${
+              isDark ? 'bg-white/5 border-white/10 text-white focus:border-white/30' : 'bg-black/5 border-black/10 text-black focus:border-black/30'
+            }`} />
+        </div>
+        <div>
+          <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Bis</label>
+          <input type="date" value={f.quota?.to ?? ''}
+            onChange={e => setF(p => ({ ...p, quota: { hours: p.quota?.hours ?? 0, from: p.quota?.from ?? '', to: e.target.value } }))}
+            className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${
+              isDark ? 'bg-white/5 border-white/10 text-white focus:border-white/30' : 'bg-black/5 border-black/10 text-black focus:border-black/30'
+            }`} />
+        </div>
+      </div>
+
       <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Ansprechperson</div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Name" value={f.contact.name} onChange={v => setContact('name', v)} isDark={isDark} />
@@ -124,7 +155,11 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
           className={`flex-1 text-xs py-2 rounded border transition-colors ${isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'}`}>
           Abbrechen
         </button>
-        <button onClick={() => f.name && onSave({ ...f, cc: (f.cc ?? []).filter(c => c.name.trim() || c.email.trim()) })}
+        <button onClick={() => f.name && onSave({
+          ...f,
+          cc: (f.cc ?? []).filter(c => c.name.trim() || c.email.trim()),
+          quota: f.quota && f.quota.hours > 0 && f.quota.from && f.quota.to ? f.quota : undefined,
+        })}
           className={`flex-1 text-xs py-2 rounded font-semibold transition-colors ${btnPrimary}`}>
           Speichern
         </button>
@@ -196,6 +231,7 @@ export default function ClientsView() {
                       <div className={`text-[11px] mt-0.5 ${textMuted}`}>
                         {c.uid && <span className="mr-3">{c.uid}</span>}
                         {c.hourlyRate != null && <span className="mr-3">CHF {c.hourlyRate}/h</span>}
+                        {c.quota && <span className="mr-3">Kontingent {c.quota.hours}h ({fmtIso(c.quota.from)}–{fmtIso(c.quota.to)})</span>}
                         {c.address.street && <span>{c.address.street}, {c.address.zip} {c.address.city}</span>}
                       </div>
                       {c.contact.name && (

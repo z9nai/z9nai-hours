@@ -25,6 +25,12 @@ export interface CcRecipient {
   email: string;
 }
 
+export interface Quota {
+  hours: number; // budget in hours for the period (decimal, e.g. 733.33)
+  from: string;  // ISO date, period start
+  to: string;    // ISO date, period end
+}
+
 export interface Client {
   id: string;
   uid: string;
@@ -34,6 +40,7 @@ export interface Client {
   color: string; // key from CLIENT_COLORS palette
   hourlyRate?: number; // CHF per hour
   cc?: CcRecipient[]; // additional invoice recipients (CC)
+  quota?: Quota; // hour budget (Kostendach / Kontingent)
 }
 
 export interface TimeEntry {
