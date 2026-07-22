@@ -238,22 +238,29 @@ export default function ReportsView() {
                   </div>
                 );
               })}
-              {/* Total: bar = total usage vs elapsed quota (period start up to current month) */}
-              <div className={`flex items-center gap-3 px-4 py-2 border-t-2 ${isDark ? 'border-white/15' : 'border-black/15'}`}>
-                <span className={`w-32 flex-shrink-0 text-xs font-semibold ${isDark ? 'text-white' : 'text-black'}`}>Total</span>
-                <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-white/8' : 'bg-black/8'}`}>
-                  <div
-                    className={`h-full rounded-full ${elapsedOver ? 'bg-red-500' : colorCls.dot}`}
-                    style={{ width: `${Math.min(elapsedPct, 100)}%` }}
-                  />
-                </div>
-                <span className={`w-20 flex-shrink-0 text-right text-xs font-semibold tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
-                  {fmtDuration(usedMins)}
-                </span>
-                <span className={`w-12 flex-shrink-0 text-right text-[10px] tabular-nums font-semibold ${elapsedOver ? 'text-red-400' : isDark ? 'text-white/70' : 'text-black/70'}`}>
-                  {elapsedPct.toFixed(0)}%
-                </span>
-              </div>
+              {/* Total: all listed months incl. current, bar vs total quota */}
+              {(() => {
+                const totalMins = listedRows.reduce((s, r) => s + r.mins, 0);
+                const totalPct = quotaMins > 0 ? (totalMins / quotaMins) * 100 : 0;
+                const totalOver = totalMins > quotaMins;
+                return (
+                  <div className={`flex items-center gap-3 px-4 py-2 border-t-2 ${isDark ? 'border-white/15' : 'border-black/15'}`}>
+                    <span className={`w-32 flex-shrink-0 text-xs font-semibold ${isDark ? 'text-white' : 'text-black'}`}>Total</span>
+                    <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-white/8' : 'bg-black/8'}`}>
+                      <div
+                        className={`h-full rounded-full ${totalOver ? 'bg-red-500' : colorCls.dot}`}
+                        style={{ width: `${Math.min(totalPct, 100)}%` }}
+                      />
+                    </div>
+                    <span className={`w-20 flex-shrink-0 text-right text-xs font-semibold tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
+                      {fmtDuration(totalMins)}
+                    </span>
+                    <span className={`w-12 flex-shrink-0 text-right text-[10px] tabular-nums font-semibold ${totalOver ? 'text-red-400' : isDark ? 'text-white/70' : 'text-black/70'}`}>
+                      {totalPct.toFixed(0)}%
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
