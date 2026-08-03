@@ -16,8 +16,9 @@ for (let h = 0; h < 24; h++)
   for (let m = 0; m < 60; m += 15)
     TIMES.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
 
-function ProjectInput({ value, onChange, suggestions, isDark, inputCls }: {
-  value: string; onChange: (v: string) => void; suggestions: string[]; isDark: boolean; inputCls: string;
+function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls }: {
+  value: string; onChange: (v: string) => void; onCommit: (v: string) => void;
+  suggestions: string[]; isDark: boolean; inputCls: string;
 }) {
   const [open, setOpen] = useState(false);
   const filtered = suggestions.filter(s => s !== value &&
@@ -33,14 +34,14 @@ function ProjectInput({ value, onChange, suggestions, isDark, inputCls }: {
       <input type="text" placeholder="Projektbezeichnung" value={value}
         onChange={e => onChange(e.target.value)}
         onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() => { setTimeout(() => setOpen(false), 150); onCommit(value); }}
         className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`} />
       {open && filtered.length > 0 && (
         <div className={`absolute left-0 right-0 top-full mt-1 rounded border z-30 overflow-hidden ${dropCls}`}>
           {filtered.map(s => (
             <button key={s} type="button"
               onMouseDown={e => e.preventDefault()}
-              onClick={() => { onChange(s); setOpen(false); }}
+              onClick={() => { onChange(s); onCommit(s); setOpen(false); }}
               className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${itemCls}`}>
               {s}
             </button>
@@ -94,7 +95,7 @@ export default function EntryPanel({ entry, onClose, onNew }: Props) {
 }
 
 function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }) {
-  const { clients, entries, updateEntry, deleteEntry, isDark } = useStore();
+  const { clients, entries, projects, updateEntry, deleteEntry, touchProject, isDark } = useStore();
 
   const [form, setForm] = useState({
     clientId: entry.clientId,
@@ -117,11 +118,15 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
     });
   }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Persisted MRU list (most recently used first), plus current-month projects
+  // not yet in the list; capped at 30
   const knownProjects = useMemo(() => {
-    const set = new Set<string>();
-    entries.forEach(e => { if (e.project && e.clientId === form.clientId) set.add(e.project); });
-    return Array.from(set).sort();
-  }, [entries, form.clientId]);
+    const stored = projects[form.clientId] ?? [];
+    const fromEntries = new Set<string>();
+    entries.forEach(e => { if (e.project && e.clientId === form.clientId) fromEntries.add(e.project); });
+    const merged = [...stored, ...[...fromEntries].filter(p => !stored.includes(p)).sort()];
+    return merged.slice(0, 30);
+  }, [projects, entries, form.clientId]);
 
   // Auto-save: every change updates the entry immediately (disk write is debounced in the store)
   const set = (k: string, v: string) => {
@@ -211,6 +216,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
         <div>
           <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Projekt</label>
           <ProjectInput value={form.project} onChange={v => set('project', v)}
+            onCommit={v => touchProject(form.clientId, v)}
             suggestions={knownProjects} isDark={isDark} inputCls={inputCls} />
         </div>
 

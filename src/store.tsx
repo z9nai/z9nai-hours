@@ -11,6 +11,7 @@ interface StoreCtx {
   company: Company;
   clients: Client[];
   entries: TimeEntry[];
+  projects: Record<string, string[]>; // clientId → projects, most recently used first
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
@@ -20,12 +21,15 @@ interface StoreCtx {
   addEntry: (e: TimeEntry) => void;
   updateEntry: (e: TimeEntry) => void;
   deleteEntry: (id: string) => void;
+  touchProject: (clientId: string, project: string) => void;
   pickDirectory: () => Promise<void>;
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
   setMonth: (year: number, month: number) => void;
   readMonthEntries: (year: number, month: number) => Promise<TimeEntry[]>;
 }
+
+const MAX_PROJECTS = 30;
 
 const Ctx = createContext<StoreCtx>(null!);
 export const useStore = () => useContext(Ctx);
@@ -97,6 +101,31 @@ async function writeJson(dir: FileSystemDirectoryHandle, name: string, data: unk
   }
 }
 
+// One-time migration: build the per-client MRU project list from all existing
+// month files (hours-YYYY-MM.json). Entries are processed chronologically so
+// the most recently used project ends up first.
+async function buildProjectsFromHistory(dir: FileSystemDirectoryHandle): Promise<Record<string, string[]>> {
+  const names: string[] = [];
+  for await (const name of dir.keys()) {
+    if (/^hours-\d{4}-\d{2}\.json$/.test(name)) names.push(name);
+  }
+  names.sort();
+  const all: TimeEntry[] = [];
+  for (const name of names) {
+    const md = await readJson<MonthData>(dir, name, { year: 0, month: 0, entries: [] });
+    all.push(...md.entries);
+  }
+  all.sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  const result: Record<string, string[]> = {};
+  for (const e of all) {
+    const p = e.project?.trim();
+    if (!p || !e.clientId) continue;
+    const list = result[e.clientId] ?? [];
+    result[e.clientId] = [p, ...list.filter(x => x !== p)].slice(0, MAX_PROJECTS);
+  }
+  return result;
+}
+
 // ── Store ───────────────────────────────────────────────────────────────────
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const now = new Date();
@@ -107,18 +136,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [company, setCompanyState] = useState<Company>(DEFAULT_COMPANY);
   const [clients, setClientsState] = useState<Client[]>([]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [projects, setProjects] = useState<Record<string, string[]>>({});
   const [currentMonth, setCurrentMonth] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
 
   const loadAll = useCallback(async (dir: FileSystemDirectoryHandle, year: number, month: number) => {
-    const [c, cl, md] = await Promise.all([
+    const [c, cl, md, pr] = await Promise.all([
       readJson<Company>(dir, 'company.json', DEFAULT_COMPANY),
       readJson<Client[]>(dir, 'clients.json', []),
       readJson<MonthData>(dir, monthKey(year, month), { year, month, entries: [] }),
+      readJson<Record<string, string[]>>(dir, 'projects.json', {}),
     ]);
     setCompanyState(c);
     setClientsState(cl);
     setEntries(md.entries);
+    setProjects(pr);
   }, []);
 
   const activateDir = useCallback(async (dir: FileSystemDirectoryHandle, year: number, month: number) => {
@@ -136,6 +168,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     };
     await initIfMissing('company.json', DEFAULT_COMPANY);
     await initIfMissing('clients.json', []);
+    // projects.json fehlt noch → einmalig aus allen bestehenden Monatsdateien aufbauen
+    try {
+      await dir.getFileHandle('projects.json');
+    } catch (e) {
+      if (e instanceof Error && e.name === 'NotFoundError') {
+        const built = await buildProjectsFromHistory(dir);
+        await writeJson(dir, 'projects.json', built);
+        setProjects(built);
+      }
+    }
   }, [loadAll]);
 
   // Auto-restore saved directory handle on startup
@@ -253,6 +295,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setEntries(prev => { const u = prev.filter(x => x.id !== id); saveMonthEntries(u); return u; });
   }, [saveMonthEntries]);
 
+  // Record a project as "just used": move to front of the client's MRU list, cap at MAX_PROJECTS
+  const touchProject = useCallback((clientId: string, project: string) => {
+    const p = project.trim();
+    if (!clientId || !p) return;
+    setProjects(prev => {
+      const list = prev[clientId] ?? [];
+      if (list[0] === p) return prev; // already on top
+      const updated = { ...prev, [clientId]: [p, ...list.filter(x => x !== p)].slice(0, MAX_PROJECTS) };
+      if (dirRef.current) writeJson(dirRef.current, 'projects.json', updated);
+      return updated;
+    });
+  }, []);
+
   const readMonthEntries = useCallback(async (year: number, month: number): Promise<TimeEntry[]> => {
     if (!dirRef.current) return [];
     flushPendingWrite();
@@ -268,8 +323,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, dirHandle, savedHandleAvailable, isDark, currentMonth,
-      setCompany, setClients, addEntry, updateEntry, deleteEntry,
+      company, clients, entries, projects, dirHandle, savedHandleAvailable, isDark, currentMonth,
+      setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject,
       pickDirectory, reconnectDirectory, toggleTheme, setMonth, readMonthEntries,
     }}>
       {children}
