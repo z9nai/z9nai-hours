@@ -120,6 +120,18 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
     });
   }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Follow calendar drag/resize: sync date & times from the live store entry.
+  // Text fields (project, description, …) are left alone so typing is never clobbered.
+  const live = entries.find(e => e.id === entry.id);
+  useEffect(() => {
+    if (!live) return;
+    setForm(f =>
+      f.date === live.date && f.startTime === live.startTime && f.endTime === live.endTime
+        ? f
+        : { ...f, date: live.date, startTime: live.startTime, endTime: live.endTime }
+    );
+  }, [live?.date, live?.startTime, live?.endTime]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Persisted MRU list (most recently used first), plus current-month projects
   // not yet in the list; capped at 30
   const knownProjects = useMemo(() => {
