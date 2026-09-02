@@ -5,6 +5,11 @@ export interface Address {
   country: string;
 }
 
+export interface ExtraFieldConfig {
+  enabled: boolean;
+  label: string;
+}
+
 export interface Company {
   name: string;
   uid: string;
@@ -41,6 +46,7 @@ export interface Client {
   hourlyRate?: number; // CHF per hour
   cc?: CcRecipient[]; // additional invoice recipients (CC)
   quota?: Quota; // hour budget (Kostendach / Kontingent)
+  extraField?: ExtraFieldConfig; // optional additional entry field (configurable label)
 }
 
 export interface TimeEntry {
@@ -51,6 +57,7 @@ export interface TimeEntry {
   endTime: string;    // "HH:MM" in 15-min steps
   description: string;
   project: string;
+  extra?: string;     // value of the company-configurable extra field
 }
 
 export type View = 'calendar' | 'clients' | 'company';

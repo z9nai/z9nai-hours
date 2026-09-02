@@ -117,6 +117,20 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
         </div>
       </div>
 
+      <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Zusatzfeld für Einträge</div>
+      <div className="grid grid-cols-2 gap-3 items-end">
+        <label className={`flex items-center gap-2 text-xs py-2 cursor-pointer ${isDark ? 'text-white/70' : 'text-black/70'}`}>
+          <input type="checkbox"
+            checked={f.extraField?.enabled ?? false}
+            onChange={e => setF(p => ({ ...p, extraField: { enabled: e.target.checked, label: p.extraField?.label ?? '' } }))}
+            className="accent-blue-500" />
+          Einblenden
+        </label>
+        <Field label="Bezeichnung" value={f.extraField?.label ?? ''}
+          onChange={v => setF(p => ({ ...p, extraField: { enabled: p.extraField?.enabled ?? false, label: v } }))}
+          placeholder="z.B. Ticket-Nr." isDark={isDark} />
+      </div>
+
       <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Ansprechperson</div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Name" value={f.contact.name} onChange={v => setContact('name', v)} isDark={isDark} />

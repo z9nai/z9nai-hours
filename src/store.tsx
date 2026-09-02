@@ -12,6 +12,7 @@ interface StoreCtx {
   clients: Client[];
   entries: TimeEntry[];
   projects: Record<string, string[]>; // clientId → projects, most recently used first
+  extras: Record<string, string[]>;   // clientId → extra-field values, most recently used first
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
@@ -22,6 +23,7 @@ interface StoreCtx {
   updateEntry: (e: TimeEntry) => void;
   deleteEntry: (id: string) => void;
   touchProject: (clientId: string, project: string) => void;
+  touchExtra: (clientId: string, value: string) => void;
   pickDirectory: () => Promise<void>;
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
@@ -137,20 +139,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [clients, setClientsState] = useState<Client[]>([]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [projects, setProjects] = useState<Record<string, string[]>>({});
+  const [extras, setExtras] = useState<Record<string, string[]>>({});
   const [currentMonth, setCurrentMonth] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
 
   const loadAll = useCallback(async (dir: FileSystemDirectoryHandle, year: number, month: number) => {
-    const [c, cl, md, pr] = await Promise.all([
+    const [c, cl, md, pr, ex] = await Promise.all([
       readJson<Company>(dir, 'company.json', DEFAULT_COMPANY),
       readJson<Client[]>(dir, 'clients.json', []),
       readJson<MonthData>(dir, monthKey(year, month), { year, month, entries: [] }),
       readJson<Record<string, string[]>>(dir, 'projects.json', {}),
+      readJson<Record<string, string[]>>(dir, 'extras.json', {}),
     ]);
     setCompanyState(c);
     setClientsState(cl);
     setEntries(md.entries);
     setProjects(pr);
+    setExtras(ex);
   }, []);
 
   const activateDir = useCallback(async (dir: FileSystemDirectoryHandle, year: number, month: number) => {
@@ -168,6 +173,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     };
     await initIfMissing('company.json', DEFAULT_COMPANY);
     await initIfMissing('clients.json', []);
+    await initIfMissing('extras.json', {});
     // projects.json fehlt noch → einmalig aus allen bestehenden Monatsdateien aufbauen
     try {
       await dir.getFileHandle('projects.json');
@@ -295,17 +301,30 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setEntries(prev => { const u = prev.filter(x => x.id !== id); saveMonthEntries(u); return u; });
   }, [saveMonthEntries]);
 
-  // Record a project as "just used": move to front of the client's MRU list, cap at MAX_PROJECTS
-  const touchProject = useCallback((clientId: string, project: string) => {
-    const p = project.trim();
+  // Record a value as "just used": move to front of the client's MRU list, cap at MAX_PROJECTS
+  const touchMru = (
+    setter: React.Dispatch<React.SetStateAction<Record<string, string[]>>>,
+    fileName: string,
+    clientId: string,
+    value: string,
+  ) => {
+    const p = value.trim();
     if (!clientId || !p) return;
-    setProjects(prev => {
+    setter(prev => {
       const list = prev[clientId] ?? [];
       if (list[0] === p) return prev; // already on top
       const updated = { ...prev, [clientId]: [p, ...list.filter(x => x !== p)].slice(0, MAX_PROJECTS) };
-      if (dirRef.current) writeJson(dirRef.current, 'projects.json', updated);
+      if (dirRef.current) writeJson(dirRef.current, fileName, updated);
       return updated;
     });
+  };
+
+  const touchProject = useCallback((clientId: string, project: string) => {
+    touchMru(setProjects, 'projects.json', clientId, project);
+  }, []);
+
+  const touchExtra = useCallback((clientId: string, value: string) => {
+    touchMru(setExtras, 'extras.json', clientId, value);
   }, []);
 
   const readMonthEntries = useCallback(async (year: number, month: number): Promise<TimeEntry[]> => {
@@ -323,8 +342,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, projects, dirHandle, savedHandleAvailable, isDark, currentMonth,
-      setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject,
+      company, clients, entries, projects, extras, dirHandle, savedHandleAvailable, isDark, currentMonth,
+      setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra,
       pickDirectory, reconnectDirectory, toggleTheme, setMonth, readMonthEntries,
     }}>
       {children}

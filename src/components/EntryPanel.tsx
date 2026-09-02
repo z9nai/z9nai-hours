@@ -16,9 +16,9 @@ for (let h = 0; h < 24; h++)
   for (let m = 0; m < 60; m += 15)
     TIMES.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
 
-function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls }: {
+function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls, placeholder = 'Projektbezeichnung' }: {
   value: string; onChange: (v: string) => void; onCommit: (v: string) => void;
-  suggestions: string[]; isDark: boolean; inputCls: string;
+  suggestions: string[]; isDark: boolean; inputCls: string; placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const filtered = suggestions.filter(s => s !== value &&
@@ -31,7 +31,7 @@ function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls
     : 'text-black/70 hover:bg-black/5 hover:text-black';
   return (
     <div className="relative">
-      <input type="text" placeholder="Projektbezeichnung" value={value}
+      <input type="text" placeholder={placeholder} value={value}
         onChange={e => onChange(e.target.value)}
         onFocus={() => setOpen(true)}
         onBlur={() => { setTimeout(() => setOpen(false), 150); onCommit(value); }}
@@ -95,7 +95,7 @@ export default function EntryPanel({ entry, onClose, onNew }: Props) {
 }
 
 function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }) {
-  const { clients, entries, projects, updateEntry, deleteEntry, touchProject, isDark } = useStore();
+  const { clients, entries, projects, extras, updateEntry, deleteEntry, touchProject, touchExtra, isDark } = useStore();
 
   const [form, setForm] = useState({
     clientId: entry.clientId,
@@ -104,6 +104,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
     endTime: entry.endTime,
     project: entry.project,
     description: entry.description,
+    extra: entry.extra ?? '',
   });
 
   // Reset the form when a different entry is opened
@@ -115,6 +116,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
       endTime: entry.endTime,
       project: entry.project,
       description: entry.description,
+      extra: entry.extra ?? '',
     });
   }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -127,6 +129,14 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
     const merged = [...stored, ...[...fromEntries].filter(p => !stored.includes(p)).sort()];
     return merged.slice(0, 30);
   }, [projects, entries, form.clientId]);
+
+  const knownExtras = useMemo(() => {
+    const stored = extras[form.clientId] ?? [];
+    const fromEntries = new Set<string>();
+    entries.forEach(e => { if (e.extra && e.clientId === form.clientId) fromEntries.add(e.extra); });
+    const merged = [...stored, ...[...fromEntries].filter(p => !stored.includes(p)).sort()];
+    return merged.slice(0, 30);
+  }, [extras, entries, form.clientId]);
 
   // Auto-save: every change updates the entry immediately (disk write is debounced in the store)
   const set = (k: string, v: string) => {
@@ -212,13 +222,33 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
           )}
         </div>
 
-        {/* Project */}
+        {/* Project (required) */}
         <div>
-          <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Projekt</label>
+          <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>
+            Projekt <span className={form.project.trim() ? '' : 'text-red-400'}>*</span>
+          </label>
           <ProjectInput value={form.project} onChange={v => set('project', v)}
             onCommit={v => touchProject(form.clientId, v)}
-            suggestions={knownProjects} isDark={isDark} inputCls={inputCls} />
+            suggestions={knownProjects} isDark={isDark}
+            inputCls={form.project.trim() ? inputCls : `${inputCls} !border-red-400/60`} />
         </div>
+
+        {/* Configurable extra field of the selected client (optional) */}
+        {(() => {
+          const extraCfg = clients.find(c => c.id === form.clientId)?.extraField;
+          if (!extraCfg?.enabled) return null;
+          return (
+            <div>
+              <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>
+                {extraCfg.label || 'Zusatz'}
+              </label>
+              <ProjectInput value={form.extra} onChange={v => set('extra', v)}
+                onCommit={v => touchExtra(form.clientId, v)}
+                suggestions={knownExtras} isDark={isDark} inputCls={inputCls}
+                placeholder={extraCfg.label || 'Zusatz'} />
+            </div>
+          );
+        })()}
 
         {/* Description */}
         <div>
