@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { TimeEntry } from '../types';
 import { clientColorClasses } from '../colors';
@@ -51,6 +51,10 @@ export default function ReportsView() {
   const [year, setYear] = useState(currentMonth.year);
   const [month, setMonth] = useState(currentMonth.month);
   const [clientId, setClientId] = useState<string>('all');
+  const [projectFilter, setProjectFilter] = useState<string>('all');
+  const [projectSearch, setProjectSearch] = useState('');
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
   const [monthEntries, setMonthEntries] = useState<TimeEntry[]>([]);
 
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i);
@@ -85,9 +89,39 @@ export default function ReportsView() {
     return () => { cancelled = true; };
   }, [clients, readMonthEntries, monthEntries]);
 
-  const filtered = useMemo<TimeEntry[]>(() => {
-    return monthEntries.filter(e => clientId === 'all' || e.clientId === clientId);
+  // All unique projects from month entries (respecting client filter)
+  const allProjects = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of monthEntries) {
+      if (clientId !== 'all' && e.clientId !== clientId) continue;
+      if (e.project) set.add(e.project);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'de'));
   }, [monthEntries, clientId]);
+
+  // Close project dropdown on outside click
+  useEffect(() => {
+    const handler = (ev: MouseEvent) => {
+      if (projectDropdownRef.current && !projectDropdownRef.current.contains(ev.target as Node)) {
+        setProjectDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.toLowerCase().trim();
+    if (!q) return allProjects;
+    return allProjects.filter(p => p.toLowerCase().includes(q));
+  }, [allProjects, projectSearch]);
+
+  const filtered = useMemo<TimeEntry[]>(() => {
+    return monthEntries.filter(e =>
+      (clientId === 'all' || e.clientId === clientId) &&
+      (projectFilter === 'all' || (e.project || '') === projectFilter)
+    );
+  }, [monthEntries, clientId, projectFilter]);
 
   // Project totals grouped by (clientId, project)
   const projectTotals = useMemo(() => {
@@ -146,11 +180,63 @@ export default function ReportsView() {
             className={`text-xs px-2 py-1.5 rounded border outline-none transition-colors ${selectCls}`}>
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          <select value={clientId} onChange={e => setClientId(e.target.value)}
+          <select value={clientId} onChange={e => { setClientId(e.target.value); setProjectFilter('all'); }}
             className={`text-xs px-2 py-1.5 rounded border outline-none transition-colors ${selectCls}`}>
             <option value="all">Alle Kunden</option>
             {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+          {/* Project filter with search */}
+          <div className="relative" ref={projectDropdownRef}>
+            <button
+              onClick={() => { setProjectDropdownOpen(o => !o); setProjectSearch(''); }}
+              className={`text-xs px-2 py-1.5 rounded border outline-none transition-colors text-left min-w-[120px] truncate ${selectCls}`}
+            >
+              {projectFilter === 'all' ? 'Alle Projekte' : projectFilter}
+            </button>
+            {projectDropdownOpen && (
+              <div className={`absolute right-0 top-full mt-1 z-50 w-56 rounded-lg border shadow-lg overflow-hidden ${
+                isDark ? 'bg-[#1a1b20] border-white/10' : 'bg-white border-black/10'
+              }`}>
+                <div className="p-1.5">
+                  <input
+                    autoFocus
+                    value={projectSearch}
+                    onChange={e => setProjectSearch(e.target.value)}
+                    placeholder="Suchen…"
+                    className={`w-full text-xs px-2 py-1.5 rounded border outline-none transition-colors ${selectCls}`}
+                  />
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  <button
+                    onClick={() => { setProjectFilter('all'); setProjectDropdownOpen(false); }}
+                    className={`w-full text-left text-xs px-3 py-1.5 transition-colors ${
+                      projectFilter === 'all'
+                        ? (isDark ? 'bg-white/10 text-white' : 'bg-black/10 text-black')
+                        : (isDark ? 'text-white/70 hover:bg-white/5' : 'text-black/70 hover:bg-black/5')
+                    }`}
+                  >
+                    Alle Projekte
+                  </button>
+                  {filteredProjects.map(p => (
+                    <button
+                      key={p}
+                      onClick={() => { setProjectFilter(p); setProjectDropdownOpen(false); }}
+                      className={`w-full text-left text-xs px-3 py-1.5 truncate transition-colors ${
+                        projectFilter === p
+                          ? (isDark ? 'bg-white/10 text-white' : 'bg-black/10 text-black')
+                          : (isDark ? 'text-white/70 hover:bg-white/5' : 'text-black/70 hover:bg-black/5')
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  {filteredProjects.length === 0 && (
+                    <div className={`text-xs px-3 py-2 ${muted}`}>Keine Projekte gefunden</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
