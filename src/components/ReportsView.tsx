@@ -248,6 +248,8 @@ export default function ReportsView() {
           const rows = quotaUsage[c.id];
           const quotaMins = Math.round(q.hours * 60);
           const colorCls = clientColorClasses(c.color);
+          const rate = c.hourlyRate;
+          const chf = (mins: number) => fmtChf((mins / 60) * rate!);
           // Monthly budget = total quota split evenly across the period's months
           const monthlyQuotaMins = rows.length > 0 ? quotaMins / rows.length : 0;
           const nowD = new Date();
@@ -287,18 +289,18 @@ export default function ReportsView() {
                 </div>
                 <div className="flex items-center justify-between mt-2">
                   <span className={`text-xs ${isDark ? 'text-white/70' : 'text-black/70'}`}>
-                    {fmtDuration(usedMins)} von {fmtDuration(Math.round(elapsedQuotaMins))} ({elapsedPct.toFixed(1)}%)
+                    {fmtDuration(usedMins)}{rate != null && ` (${chf(usedMins)})`} von {fmtDuration(Math.round(elapsedQuotaMins))}{rate != null && ` (${chf(elapsedQuotaMins)})`} – {elapsedPct.toFixed(1)}%
                   </span>
                   <span className={`text-xs tabular-nums font-medium ${elapsedOver ? 'text-red-400' : isDark ? 'text-white/50' : 'text-black/50'}`}>
                     {elapsedOver
-                      ? `${fmtDuration(Math.round(usedMins - elapsedQuotaMins))} überzogen`
+                      ? `${fmtDuration(Math.round(usedMins - elapsedQuotaMins))}${rate != null ? ` (${chf(usedMins - elapsedQuotaMins)})` : ''} überzogen`
                       : elapsedLabel ?? ''}
                   </span>
                 </div>
               </div>
               {/* Per-month breakdown: bar = usage vs monthly share of the quota */}
               <div className={`px-4 pb-1 text-[10px] ${muted}`}>
-                Kontingent Total: {fmtDuration(quotaMins)} | Monatskontingent: {fmtDuration(Math.round(monthlyQuotaMins))}
+                Kontingent Total: {fmtDuration(quotaMins)}{rate != null && ` (${chf(quotaMins)})`} | Monatskontingent: {fmtDuration(Math.round(monthlyQuotaMins))}{rate != null && ` (${chf(monthlyQuotaMins)})`}
               </div>
               {listedRows.map(r => {
                 const mPct = monthlyQuotaMins > 0 ? (r.mins / monthlyQuotaMins) * 100 : 0;
@@ -318,6 +320,11 @@ export default function ReportsView() {
                     <span className={`w-20 flex-shrink-0 text-right text-xs tabular-nums ${isDark ? 'text-white/50' : 'text-black/50'}`}>
                       {fmtDuration(r.mins)}
                     </span>
+                    {rate != null && (
+                      <span className={`w-28 flex-shrink-0 text-right text-xs tabular-nums ${isDark ? 'text-white/50' : 'text-black/50'}`}>
+                        {chf(r.mins)}
+                      </span>
+                    )}
                     <span className={`w-12 flex-shrink-0 text-right text-[10px] tabular-nums ${mOver ? 'text-red-400' : muted}`}>
                       {mPct.toFixed(0)}%
                     </span>
@@ -341,6 +348,11 @@ export default function ReportsView() {
                     <span className={`w-20 flex-shrink-0 text-right text-xs font-semibold tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
                       {fmtDuration(totalMins)}
                     </span>
+                    {rate != null && (
+                      <span className={`w-28 flex-shrink-0 text-right text-xs font-semibold tabular-nums ${isDark ? 'text-white' : 'text-black'}`}>
+                        {chf(totalMins)}
+                      </span>
+                    )}
                     <span className={`w-12 flex-shrink-0 text-right text-[10px] tabular-nums font-semibold ${totalOver ? 'text-red-400' : isDark ? 'text-white/70' : 'text-black/70'}`}>
                       {totalPct.toFixed(0)}%
                     </span>
