@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings, TrendingUp } from 'lucide-react';
+import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings, TrendingUp, Timer } from 'lucide-react';
 import { useStore } from './store';
 import { TimeEntry } from './types';
 import Calendar from './components/Calendar';
@@ -10,8 +10,9 @@ import CompanyView from './components/CompanyView';
 import ReportsView from './components/ReportsView';
 import AdminView from './components/AdminView';
 import RevenueView from './components/RevenueView';
+import WorktimeView from './components/WorktimeView';
 
-type View = 'calendar' | 'clients' | 'reports' | 'revenue' | 'company' | 'admin';
+type View = 'calendar' | 'clients' | 'reports' | 'revenue' | 'worktime' | 'company' | 'admin';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
@@ -60,14 +61,15 @@ export default function App() {
   const navBtn = (v: View, Icon: React.ElementType, label: string) => (
     <button
       onClick={() => setView(v)}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors ${
+      title={label}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs whitespace-nowrap transition-colors ${
         view === v
           ? isDark ? 'bg-white/10 text-white' : 'bg-black/10 text-black'
           : isDark ? 'text-white/35 hover:text-white/70' : 'text-black/35 hover:text-black/70'
       }`}
     >
       <Icon size={13} />
-      {label}
+      <span className="hidden xl:inline">{label}</span>
     </button>
   );
 
@@ -78,12 +80,13 @@ export default function App() {
         <a href="https://z9nai.ch" target="_blank" rel="noopener noreferrer" className="flex-shrink-0 mr-1 opacity-80 hover:opacity-100 transition-opacity">
           <img src="favicon.png" alt="Z9nAI" className="w-6 h-6" />
         </a>
-        <span className={`text-xs font-bold tracking-widest mr-4 ${isDark ? 'text-white/70' : 'text-black/70'}`}>
+        <span className={`text-xs font-bold tracking-widest mr-4 whitespace-nowrap ${isDark ? 'text-white/70' : 'text-black/70'}`}>
           Z9nAI Hours
         </span>
         {navBtn('calendar', Clock, 'Stunden')}
         {navBtn('reports', BarChart2, 'Report')}
         {navBtn('revenue', TrendingUp, 'Umsatz')}
+        {navBtn('worktime', Timer, 'Arbeitszeit')}
         {navBtn('clients', Users, 'Kunden')}
         {navBtn('company', Building2, 'Firma')}
 
@@ -93,7 +96,7 @@ export default function App() {
           {/* Data directory */}
           <button
             onClick={pickDirectory}
-            className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded border transition-colors ${
+            className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded border whitespace-nowrap transition-colors ${
               dirHandle
                 ? isDark ? 'border-white/15 text-white/50 hover:border-white/30' : 'border-black/15 text-black/50 hover:border-black/30'
                 : isDark ? 'border-blue-500/40 text-blue-400 hover:border-blue-400' : 'border-blue-500/40 text-blue-600 hover:border-blue-500'
@@ -160,6 +163,10 @@ export default function App() {
         ) : view === 'revenue' ? (
           <div className="flex-1 overflow-y-auto">
             <RevenueView />
+          </div>
+        ) : view === 'worktime' ? (
+          <div className="flex-1 overflow-y-auto">
+            <WorktimeView />
           </div>
         ) : view === 'admin' ? (
           <div className="flex-1 overflow-y-auto">

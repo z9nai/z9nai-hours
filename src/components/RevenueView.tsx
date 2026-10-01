@@ -1,28 +1,13 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useStore } from '../store';
-import { Absence, AbsenceType, Client } from '../types';
+import { AbsenceType, Client } from '../types';
 import { clientColorClasses } from '../colors';
 import { ABSENCE_ORDER, ABSENCE_TYPES, absenceDays } from '../absences';
-
-const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
-const MONTH_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-
-type Range = '3' | '6' | '12' | 'year';
-const RANGES: { key: Range; label: string }[] = [
-  { key: '3', label: '3 Monate' },
-  { key: '6', label: '6 Monate' },
-  { key: '12', label: '12 Monate' },
-  { key: 'year', label: 'Jahr' },
-];
-
-type YM = { y: number; m: number };
-
-function parseMins(time: string): number {
-  const [h, m] = time.split(':').map(Number);
-  return h * 60 + m;
-}
+import {
+  Absences, BarSeries, LegendItem, MONTH_NAMES, MONTH_SHORT, MonthBar, MonthlyChart, Range, RangePicker, Theme, TipRow, Tooltip, YM,
+  chartTheme, fmtDays, fmtIso, fmtYm, laterIso, monthState, niceTicks, parseMins, rangeMonths, useWidth, workdays,
+} from './charts';
 
 function fmtChf(amount: number): string {
   return `CHF ${Math.round(amount).toLocaleString('de-CH')}`;
@@ -32,224 +17,45 @@ function fmtAxis(v: number): string {
   return v >= 1000 ? `${(v / 1000).toLocaleString('de-CH', { maximumFractionDigits: 1 })}k` : String(Math.round(v));
 }
 
-function fmtIso(iso: string): string {
-  const [y, m, d] = iso.split('-');
-  return `${d}.${m}.${y}`;
-}
-
 function fmtPct(v: number): string {
   return `${Math.round(v * 100)}%`;
 }
 
-// "3 Monate" etc. end with the current month; "Jahr" is Jan–Dez of the current year
-function rangeMonths(range: Range, cy: number, cm: number): YM[] {
-  if (range === 'year') return Array.from({ length: 12 }, (_, i) => ({ y: cy, m: i + 1 }));
-  const n = Number(range);
-  const out: YM[] = [];
-  for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(cy, cm - 1 - i, 1);
-    out.push({ y: d.getFullYear(), m: d.getMonth() + 1 });
-  }
-  return out;
-}
-
-type Absences = Record<string, Absence>;
-
-// Mon–Fri in a month minus absences (half days count 0.5), optionally only up
-// to (and including) a given day and only inside an ISO date window (from/to)
-function workdays(y: number, m: number, off: Absences, uptoDay?: number, from = '', to = ''): number {
-  const last = new Date(y, m, 0).getDate();
-  const end = Math.min(uptoDay ?? last, last);
-  const ym = `${y}-${String(m).padStart(2, '0')}`;
-  let n = 0;
-  for (let d = 1; d <= end; d++) {
-    const wd = new Date(y, m - 1, d).getDay();
-    if (wd === 0 || wd === 6) continue;
-    const iso = `${ym}-${String(d).padStart(2, '0')}`;
-    if ((from && iso < from) || (to && iso > to)) continue;
-    n += 1 - absenceDays(off[iso]);
-  }
-  return n;
-}
-
 // A client's revenue target for one month: only during the mandate (the
-// Kontingent period, if set); partial months pro-rata by working days.
+// Kontingent period, if set) and from the company start date on; partial
+// months pro-rata by working days.
 // With uptoDay only the share up to that day ("Soll bis heute"). Absences don't
 // lower a full month's target, they only shift how it spreads over the month.
-function clientTarget(c: Client, y: number, m: number, off: Absences, uptoDay?: number): number {
+function clientTarget(c: Client, y: number, m: number, off: Absences, start: string, uptoDay?: number): number {
   const t = c.revenueTarget ?? 0;
   if (t <= 0) return 0;
   const total = workdays(y, m, off);
-  return total > 0 ? (t * workdays(y, m, off, uptoDay, c.quota?.from, c.quota?.to)) / total : 0;
+  return total > 0 ? (t * workdays(y, m, off, uptoDay, laterIso(c.quota?.from, start), c.quota?.to)) / total : 0;
 }
 
-// 0 plus ~4 clean steps covering max
-function niceTicks(max: number): number[] {
-  if (max <= 0) return [0, 1000];
-  const raw = max / 4;
-  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
-  const step = [1, 2, 2.5, 5, 10].map(f => f * pow).find(s => s >= raw)!;
-  const ticks: number[] = [];
-  for (let v = 0; v < max + step * 0.999; v += step) ticks.push(v);
-  return ticks;
+// Maximum possible revenue from the Kontingent: the period's hours split evenly
+// over its months (as in the Report's Monatskontingent) × hourly rate; the
+// month of the company start only pro-rata, months before it not at all.
+function clientMax(c: Client, y: number, m: number, off: Absences, start: string, uptoDay?: number): number {
+  const q = c.quota;
+  if (!q || !c.hourlyRate || q.hours <= 0) return 0;
+  const [fy, fm] = q.from.split('-').map(Number);
+  const [ty, tm] = q.to.split('-').map(Number);
+  const k = y * 12 + m, s = fy * 12 + fm, e = ty * 12 + tm;
+  if (k < s || k > e) return 0;
+  const monthly = (q.hours / (e - s + 1)) * c.hourlyRate;
+  if (uptoDay == null && !start) return monthly;
+  const total = workdays(y, m, off, undefined, q.from, q.to);
+  return total > 0 ? (monthly * workdays(y, m, off, uptoDay, laterIso(q.from, start), q.to)) / total : 0;
 }
 
-function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setW(el.clientWidth);
-    const ro = new ResizeObserver(([e]) => setW(e.contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
+interface MonthInfo extends MonthBar {
+  targetToDate: number; // running month: pro-rata by working days elapsed
+  max: number;
+  maxToDate: number;
 }
 
-// Path for a column with a 4px rounded top and a square base
-function columnPath(x: number, y: number, w: number, h: number, round: boolean): string {
-  if (h <= 0) return '';
-  const r = round ? Math.min(4, h, w / 2) : 0;
-  return `M${x},${y + h} V${y + r} Q${x},${y} ${x + r},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h} Z`;
-}
-
-interface Theme {
-  isDark: boolean;
-  grid: string;
-  axisText: string;
-  ink: string;
-  surface: string;
-  ghost: string;
-}
-
-interface Series { client: Client; values: number[] }
-
-interface MonthInfo {
-  ym: YM;
-  state: 'past' | 'current' | 'future';
-  actual: number;
-  target: number;
-  targetToDate: number;    // running month: pro-rata by working days elapsed
-  forecast: number | null; // only for the current month
-}
-
-function Tooltip({ x, width, children, isDark }: { x: number; width: number; children: React.ReactNode; isDark: boolean }) {
-  const half = 100;
-  const left = Math.max(half, Math.min(width - half, x));
-  return (
-    <div
-      className={`absolute top-0 pointer-events-none z-10 w-[200px] rounded-lg border shadow-lg px-3 py-2 text-[11px] ${
-        isDark ? 'bg-[#1a1b20] border-white/10 text-white/80' : 'bg-white border-black/10 text-black/80'
-      }`}
-      style={{ left, transform: 'translateX(-50%)' }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function TipRow({ label, value, dot, strong, muted }: { label: string; value: string; dot?: string; strong?: boolean; muted?: string }) {
-  return (
-    <div className={`flex items-center justify-between gap-3 ${strong ? 'font-semibold' : ''}`}>
-      <span className={`flex items-center gap-1.5 truncate ${muted ?? ''}`}>
-        {dot && <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />}
-        {label}
-      </span>
-      <span className="tabular-nums">{value}</span>
-    </div>
-  );
-}
-
-// ── Monthly columns: stacked per client, target as a tick across each column ──
-function MonthlyChart({ months, series, theme }: { months: MonthInfo[]; series: Series[]; theme: Theme }) {
-  const [ref, width] = useWidth<HTMLDivElement>();
-  const [hover, setHover] = useState<number | null>(null);
-  const H = 220, mt = 12, mb = 24, ml = 44, mr = 8;
-  const plotW = Math.max(0, width - ml - mr), plotH = H - mt - mb;
-  const n = months.length;
-  const band = n > 0 ? plotW / n : 0;
-  const barW = Math.min(24, band * 0.5);
-  const max = Math.max(1, ...months.map(m => Math.max(m.actual, m.forecast ?? 0, m.target)));
-  const ticks = niceTicks(max);
-  const top = ticks[ticks.length - 1];
-  const yOf = (v: number) => mt + plotH - (v / top) * plotH;
-  const muted = theme.isDark ? 'text-white/40' : 'text-black/40';
-
-  return (
-    <div ref={ref} className="relative" onMouseLeave={() => setHover(null)}>
-      {width > 0 && (
-        <svg width={width} height={H} className="block">
-          {ticks.map(t => (
-            <g key={t}>
-              <line x1={ml} x2={width - mr} y1={yOf(t)} y2={yOf(t)} stroke={theme.grid} strokeWidth={1} shapeRendering="crispEdges" />
-              <text x={ml - 8} y={yOf(t)} dy="0.32em" textAnchor="end" fontSize={10} fill={theme.axisText} className="tabular-nums">{fmtAxis(t)}</text>
-            </g>
-          ))}
-          {months.map((mi, i) => {
-            const cx = ml + band * i + band / 2;
-            const x = cx - barW / 2;
-            // Stack segments bottom-up in fixed client order, 2px surface gap between them
-            const segs: { y: number; h: number; color: string }[] = [];
-            let acc = 0;
-            series.forEach(s => {
-              const v = s.values[i];
-              if (v <= 0) return;
-              const y0 = yOf(acc), y1 = yOf(acc + v);
-              segs.push({ y: y1, h: y0 - y1, color: clientColorClasses(s.client.color).swatch });
-              acc += v;
-            });
-            const isHover = hover === i;
-            const dim = hover != null && !isHover;
-            return (
-              <g key={`${mi.ym.y}-${mi.ym.m}`} opacity={dim ? 0.45 : 1}>
-                {isHover && <rect x={ml + band * i} y={mt} width={band} height={plotH} fill={theme.ghost} />}
-                {/* Forecast for the running month: the remainder as a light wash */}
-                {mi.forecast != null && mi.forecast > mi.actual && (
-                  <path d={columnPath(x, yOf(mi.forecast), barW, yOf(mi.actual) - yOf(mi.forecast) - (mi.actual > 0 ? 2 : 0), true)}
-                    fill={theme.ink} fillOpacity={0.12} />
-                )}
-                {segs.map((sg, j) => {
-                  const h = j > 0 ? sg.h - 2 : sg.h; // gap below every segment except the base one
-                  return <path key={j} d={columnPath(x, sg.y, barW, Math.max(0, h), j === segs.length - 1)} fill={sg.color} />;
-                })}
-                {mi.target > 0 && (
-                  <line x1={cx - barW / 2 - 6} x2={cx + barW / 2 + 6} y1={yOf(mi.target)} y2={yOf(mi.target)}
-                    stroke={theme.ink} strokeWidth={2} strokeLinecap="round" />
-                )}
-                <text x={cx} y={H - 8} textAnchor="middle" fontSize={10}
-                  fill={mi.state === 'current' ? theme.ink : theme.axisText}
-                  fontWeight={mi.state === 'current' ? 600 : 400}>
-                  {MONTH_SHORT[mi.ym.m - 1]}{i === 0 || mi.ym.m === 1 ? ` ${String(mi.ym.y).slice(2)}` : ''}
-                </text>
-                <rect x={ml + band * i} y={0} width={band} height={H} fill="transparent" onMouseEnter={() => setHover(i)} />
-              </g>
-            );
-          })}
-        </svg>
-      )}
-      {hover != null && (() => {
-        const mi = months[hover];
-        const cx = ml + band * hover + band / 2;
-        return (
-          <Tooltip x={cx} width={width} isDark={theme.isDark}>
-            <div className="font-semibold mb-1">{MONTH_NAMES[mi.ym.m - 1]} {mi.ym.y}{mi.state === 'current' ? ' (laufend)' : ''}</div>
-            {mi.state !== 'future' && series.filter(s => s.values[hover] > 0).map(s => (
-              <TipRow key={s.client.id} label={s.client.name} value={fmtChf(s.values[hover])} dot={clientColorClasses(s.client.color).dot} />
-            ))}
-            {mi.state !== 'future' && <TipRow label="Ist" value={fmtChf(mi.actual)} strong />}
-            {mi.forecast != null && <TipRow label="Hochrechnung" value={fmtChf(mi.forecast)} muted={muted} />}
-            <TipRow label="Ziel" value={mi.target > 0 ? fmtChf(mi.target) : '—'} muted={muted} />
-            {mi.state !== 'future' && mi.target > 0 && <TipRow label="Erreicht" value={fmtPct(mi.actual / mi.target)} muted={muted} />}
-          </Tooltip>
-        );
-      })()}
-    </div>
-  );
-}
-
-// ── Cumulative Ist vs. Ziel over the range ──
+// ── Cumulative Ist vs. Ziel (and Max. Kontingent) over the range ──
 function CumulativeChart({ months, theme, accent }: { months: MonthInfo[]; theme: Theme; accent: string }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -259,33 +65,36 @@ function CumulativeChart({ months, theme, accent }: { months: MonthInfo[]; theme
   const band = n > 0 ? plotW / n : 0;
 
   const cumTarget: number[] = [];
+  const cumMax: number[] = [];
   const cumActual: (number | null)[] = [];
-  let t = 0, a = 0;
+  let t = 0, mx = 0, a = 0;
   months.forEach(mi => {
     t += mi.targetToDate; cumTarget.push(t);
+    mx += mi.maxToDate; cumMax.push(mx);
     if (mi.state === 'future') { cumActual.push(null); return; }
     a += mi.actual; cumActual.push(a);
   });
-  const max = Math.max(1, t, a);
-  const ticks = niceTicks(max);
+  const ticks = niceTicks(Math.max(1, t, a, mx));
   const top = ticks[ticks.length - 1];
   const yOf = (v: number) => mt + plotH - (v / top) * plotH;
   const xOf = (i: number) => ml + band * i + band / 2;
 
-  const targetPts = cumTarget.map((v, i) => `${xOf(i)},${yOf(v)}`).join(' ');
+  const pts = (vals: number[]) => vals.map((v, i) => `${xOf(i)},${yOf(v)}`).join(' ');
   const actualIdx = cumActual.map((v, i) => (v == null ? -1 : i)).filter(i => i >= 0);
   const actualPts = actualIdx.map(i => `${xOf(i)},${yOf(cumActual[i]!)}`).join(' ');
   const lastA = actualIdx[actualIdx.length - 1];
   const areaPath = actualIdx.length > 0
     ? `M${xOf(actualIdx[0])},${yOf(0)} L${actualPts.split(' ').join(' L')} L${xOf(lastA)},${yOf(0)} Z`
     : '';
-  const hasTarget = t > 0;
+  const hasTarget = t > 0, hasMax = mx > 0;
   const muted = theme.isDark ? 'text-white/40' : 'text-black/40';
 
-  // End labels: Ist at its last point, Ziel at the end; skip Ziel when they would collide
-  const ziellabelY = yOf(cumTarget[n - 1] ?? 0);
-  const istLabelY = lastA != null ? yOf(cumActual[lastA]!) : 0;
-  const collide = lastA === n - 1 && Math.abs(ziellabelY - istLabelY) < 12;
+  // End labels, skipped when they would collide with one placed before them
+  const labels: { y: number; text: string; color: string; bold?: boolean; x: number }[] = [];
+  if (lastA != null) labels.push({ x: xOf(lastA) + 8, y: yOf(cumActual[lastA]!), text: `Ist ${fmtAxis(cumActual[lastA]!)}`, color: theme.ink, bold: true });
+  if (hasTarget) labels.push({ x: xOf(n - 1) + 8, y: yOf(cumTarget[n - 1]), text: `Ziel ${fmtAxis(cumTarget[n - 1])}`, color: theme.axisText });
+  if (hasMax) labels.push({ x: xOf(n - 1) + 8, y: yOf(cumMax[n - 1]), text: `Max ${fmtAxis(cumMax[n - 1])}`, color: theme.axisText });
+  const placed = labels.filter((l, i) => labels.slice(0, i).every(o => Math.abs(o.x - l.x) > 50 || Math.abs(o.y - l.y) >= 12));
 
   return (
     <div ref={ref} className="relative" onMouseLeave={() => setHover(null)}>
@@ -311,15 +120,18 @@ function CumulativeChart({ months, theme, accent }: { months: MonthInfo[]; theme
           {hover != null && (
             <line x1={xOf(hover)} x2={xOf(hover)} y1={mt} y2={mt + plotH} stroke={theme.axisText} strokeWidth={1} shapeRendering="crispEdges" />
           )}
+          {hasMax && (
+            <polyline points={pts(cumMax)} fill="none" stroke={theme.axisText} strokeWidth={2} strokeDasharray="4 3" strokeLinejoin="round" />
+          )}
           {hasTarget && (
-            <polyline points={targetPts} fill="none" stroke={theme.axisText} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            <polyline points={pts(cumTarget)} fill="none" stroke={theme.axisText} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           )}
           {areaPath && <path d={areaPath} fill={accent} fillOpacity={0.1} />}
           {actualIdx.length > 0 && (
             <polyline points={actualPts} fill="none" stroke={accent} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           )}
           {lastA != null && (
-            <circle cx={xOf(lastA)} cy={istLabelY} r={4} fill={accent} stroke={theme.surface} strokeWidth={2} />
+            <circle cx={xOf(lastA)} cy={yOf(cumActual[lastA]!)} r={4} fill={accent} stroke={theme.surface} strokeWidth={2} />
           )}
           {hover != null && cumActual[hover] != null && hover !== lastA && (
             <circle cx={xOf(hover)} cy={yOf(cumActual[hover]!)} r={4} fill={accent} stroke={theme.surface} strokeWidth={2} />
@@ -327,19 +139,12 @@ function CumulativeChart({ months, theme, accent }: { months: MonthInfo[]; theme
           {hover != null && hasTarget && (
             <circle cx={xOf(hover)} cy={yOf(cumTarget[hover])} r={4} fill={theme.axisText} stroke={theme.surface} strokeWidth={2} />
           )}
-          {lastA != null && (
-            <text x={xOf(lastA) + 8} y={istLabelY} dy="0.32em" fontSize={10} fill={theme.ink} fontWeight={600}>
-              Ist {fmtAxis(cumActual[lastA]!)}
-            </text>
-          )}
-          {hasTarget && !collide && (
-            <text x={xOf(n - 1) + 8} y={ziellabelY} dy="0.32em" fontSize={10} fill={theme.axisText}>
-              Ziel {fmtAxis(cumTarget[n - 1])}
-            </text>
-          )}
+          {placed.map(l => (
+            <text key={l.text} x={l.x} y={l.y} dy="0.32em" fontSize={10} fill={l.color} fontWeight={l.bold ? 600 : 400}>{l.text}</text>
+          ))}
         </svg>
       )}
-      {hover != null && (() => {
+      {hover != null && months[hover] && (() => {
         const mi = months[hover];
         const act = cumActual[hover];
         const tgt = cumTarget[hover];
@@ -348,6 +153,7 @@ function CumulativeChart({ months, theme, accent }: { months: MonthInfo[]; theme
             <div className="font-semibold mb-1">bis {MONTH_NAMES[mi.ym.m - 1]} {mi.ym.y}</div>
             {act != null && <TipRow label="Ist kumuliert" value={fmtChf(act)} strong />}
             <TipRow label={mi.state === 'current' ? 'Soll bis heute' : 'Ziel kumuliert'} value={hasTarget ? fmtChf(tgt) : '—'} muted={muted} />
+            {hasMax && <TipRow label="Max. Kontingent" value={fmtChf(cumMax[hover])} muted={muted} />}
             {act != null && hasTarget && (
               <TipRow label={act >= tgt ? 'Vorsprung' : 'Rückstand'} value={fmtChf(Math.abs(act - tgt))} muted={muted} />
             )}
@@ -359,20 +165,25 @@ function CumulativeChart({ months, theme, accent }: { months: MonthInfo[]; theme
 }
 
 export default function RevenueView() {
-  const { clients, isDark, entries, readMonthEntries, absences: off } = useStore();
-  const [range, setRange] = useState<Range>('6');
-  const [clientId, setClientId] = useState<string>('all');
-
+  const { clients, company, isDark, entries, readMonthEntries, absences: off } = useStore();
+  const start = company.startDate ?? '';
   const now = new Date();
   const cy = now.getFullYear(), cm = now.getMonth() + 1, today = now.getDate();
-  const months = useMemo(() => rangeMonths(range, cy, cm), [range, cy, cm]);
-  const stateOf = ({ y, m }: YM): MonthInfo['state'] =>
-    y < cy || (y === cy && m < cm) ? 'past' : y === cy && m === cm ? 'current' : 'future';
+  const [range, setRange] = useState<Range>('6');
+  const [from, setFrom] = useState(start ? start.slice(0, 7) : `${cy}-01`);
+  const [clientId, setClientId] = useState<string>('all');
+
+  const months = useMemo(() => rangeMonths(range, cy, cm, from), [range, cy, cm, from]);
+  const stateOf = (ym: YM) => monthState(ym, cy, cm);
 
   // clientId → revenue per month (aligned to `months`); future months are not read.
   // Like the targets, revenue only counts during the client's mandate.
-  const [revenue, setRevenue] = useState<Record<string, number[]>>({});
-  const [loading, setLoading] = useState(true);
+  // Tagged with the range it was computed for: right after a range switch the
+  // old arrays don't match `months` and must not be used.
+  const monthsKey = months.map(ym => `${ym.y}-${ym.m}`).join(',');
+  const [loaded, setLoaded] = useState<{ key: string; data: Record<string, number[]> } | null>(null);
+  const loading = loaded?.key !== monthsKey;
+  const revenue = loading ? {} : loaded!.data;
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -386,25 +197,27 @@ export default function RevenueView() {
           const c = byId.get(e.clientId);
           if (c?.hourlyRate == null) continue;
           if (c.quota && (e.date < c.quota.from || e.date > c.quota.to)) continue;
+          if (e.date < start) continue; // before the company start
           out[c.id][i] += ((parseMins(e.endTime) - parseMins(e.startTime)) / 60) * c.hourlyRate;
         }
       }
-      if (!cancelled) { setRevenue(out); setLoading(false); }
+      if (!cancelled) setLoaded({ key: monthsKey, data: out });
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [months, clients, entries, readMonthEntries]);
+  }, [months, clients, entries, readMonthEntries, start]);
 
   const shown = clientId === 'all' ? clients : clients.filter(c => c.id === clientId);
-  const series: Series[] = shown
-    .map(c => ({ client: c, values: revenue[c.id] ?? months.map(() => 0) }))
-    .filter(s => s.values.some(v => v > 0) || (s.client.revenueTarget ?? 0) > 0);
+  const series: BarSeries[] = shown
+    .map(c => ({ id: c.id, name: c.name, color: c.color, values: revenue[c.id] ?? months.map(() => 0) }))
+    .filter((s, i) => s.values.some(v => v > 0) || (shown[i].revenueTarget ?? 0) > 0);
   const hasTargets = shown.some(c => (c.revenueTarget ?? 0) > 0);
-  const targetOf = ({ y, m }: YM, uptoDay?: number) => shown.reduce((s, c) => s + clientTarget(c, y, m, off, uptoDay), 0);
+  const targetOf = ({ y, m }: YM, uptoDay?: number) => shown.reduce((s, c) => s + clientTarget(c, y, m, off, start, uptoDay), 0);
+  const maxOf = ({ y, m }: YM, uptoDay?: number) => shown.reduce((s, c) => s + clientMax(c, y, m, off, start, uptoDay), 0);
 
   // Pace through the running month, by working days without absences
-  const wdTotal = workdays(cy, cm, off);
-  const wdElapsed = workdays(cy, cm, off, today);
+  const wdTotal = workdays(cy, cm, off, undefined, start);
+  const wdElapsed = workdays(cy, cm, off, today, start);
   // Absent working days of the running month, per type (for the forecast tile)
   const absentByType: Partial<Record<AbsenceType, number>> = {};
   for (const [iso, a] of Object.entries(off)) {
@@ -416,7 +229,6 @@ export default function RevenueView() {
     .filter(t => absentByType[t])
     .map(t => `${ABSENCE_TYPES[t].label} ${absentByType[t]!.toLocaleString('de-CH')}`)
     .join(', ');
-  const fmtDays = (n: number) => n.toLocaleString('de-CH', { maximumFractionDigits: 1 });
   const pace = wdTotal > 0 ? wdElapsed / wdTotal : 1;
 
   const monthInfos: MonthInfo[] = months.map((ym, i) => {
@@ -425,6 +237,8 @@ export default function RevenueView() {
     return {
       ym, state, actual, target: targetOf(ym),
       targetToDate: state === 'current' ? targetOf(ym, today) : targetOf(ym),
+      max: maxOf(ym),
+      maxToDate: state === 'current' ? maxOf(ym, today) : maxOf(ym),
       forecast: state === 'current' && wdElapsed > 0 ? actual / pace : null,
     };
   });
@@ -439,18 +253,10 @@ export default function RevenueView() {
   const elapsed = monthInfos.filter(m => m.state !== 'future');
   const rangeActual = elapsed.reduce((s, m) => s + m.actual, 0);
   const rangeSoll = elapsed.reduce((s, m) => s + m.targetToDate, 0);
-  const rangeLabel = elapsed.length > 0
-    ? `${MONTH_SHORT[elapsed[0].ym.m - 1]} ${String(elapsed[0].ym.y).slice(2)} – ${MONTH_SHORT[elapsed[elapsed.length - 1].ym.m - 1]} ${String(elapsed[elapsed.length - 1].ym.y).slice(2)}`
-    : '';
+  const rangeLabel = elapsed.length > 0 ? `${fmtYm(elapsed[0].ym)} – ${fmtYm(elapsed[elapsed.length - 1].ym)}` : '';
+  const hasMax = monthInfos.some(m => m.max > 0);
 
-  const theme: Theme = {
-    isDark,
-    grid: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-    axisText: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.45)',
-    ink: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.8)',
-    surface: isDark ? '#0e0f11' : '#f5f4f0',
-    ghost: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
-  };
+  const theme = chartTheme(isDark);
   const single = clientId !== 'all' ? clients.find(c => c.id === clientId) : undefined;
   const accent = single ? clientColorClasses(single.color).swatch : (isDark ? '#60a5fa' : '#2563eb');
 
@@ -463,7 +269,7 @@ export default function RevenueView() {
     : 'bg-black/5 border-black/10 text-black focus:border-black/30';
   const headCls = `px-4 py-2 text-[10px] uppercase tracking-widest ${muted} ${isDark ? 'bg-white/2' : 'bg-black/2'}`;
   const statusGood = isDark ? 'text-emerald-400' : 'text-emerald-600';
-  const statusWarn = isDark ? 'text-amber-400' : 'text-amber-600';
+  const statusWarn = isDark ? 'text-red-400' : 'text-red-600'; // not amber: that's a client color
   const missingRate = clients.filter(c => c.hourlyRate == null);
 
   const Meter = ({ value, marker }: { value: number; marker?: number }) => (
@@ -483,19 +289,8 @@ export default function RevenueView() {
         <h2 className={`text-sm font-semibold uppercase tracking-widest ${isDark ? 'text-white/50' : 'text-black/50'}`}>
           Umsatz
         </h2>
-        <div className="flex items-center gap-2">
-          <div className={`flex rounded border overflow-hidden ${isDark ? 'border-white/10' : 'border-black/10'}`}>
-            {RANGES.map(r => (
-              <button key={r.key} onClick={() => setRange(r.key)}
-                className={`text-xs px-2.5 py-1.5 transition-colors ${
-                  range === r.key
-                    ? isDark ? 'bg-white/10 text-white' : 'bg-black/10 text-black'
-                    : isDark ? 'text-white/40 hover:text-white/70' : 'text-black/40 hover:text-black/70'
-                }`}>
-                {r.key === 'year' ? `Jahr ${cy}` : r.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <RangePicker range={range} setRange={setRange} from={from} setFrom={setFrom} cy={cy} isDark={isDark} />
           <select value={clientId} onChange={e => setClientId(e.target.value)}
             className={`text-xs px-2 py-1.5 rounded border outline-none transition-colors ${selectCls}`}>
             <option value="all">Alle Kunden</option>
@@ -571,28 +366,17 @@ export default function RevenueView() {
           <span>Umsatz pro Monat</span>
           <span className="flex items-center gap-3 normal-case tracking-normal flex-wrap justify-end">
             {series.length > 1 && series.map(s => (
-              <span key={s.client.id} className="flex items-center gap-1">
-                <span className={`inline-block w-2 h-2 rounded-full ${clientColorClasses(s.client.color).dot}`} />
-                <span className={soft}>{s.client.name}</span>
-              </span>
+              <LegendItem key={s.id} kind="dot" color={clientColorClasses(s.color).swatch} label={s.name} className={soft} />
             ))}
-            {hasTargets && (
-              <span className="flex items-center gap-1">
-                <span className={`inline-block w-3 h-0.5 rounded-full ${isDark ? 'bg-white/85' : 'bg-black/80'}`} />
-                <span className={soft}>Ziel</span>
-              </span>
-            )}
-            {cur && (
-              <span className="flex items-center gap-1">
-                <span className={`inline-block w-2 h-2 rounded-sm ${isDark ? 'bg-white/15' : 'bg-black/15'}`} />
-                <span className={soft}>Hochrechnung</span>
-              </span>
-            )}
+            {hasTargets && <LegendItem kind="line" color={theme.ink} label="Ziel" className={soft} />}
+            {hasMax && <LegendItem kind="dash" color={theme.axisText} label="Max. Kontingent" className={soft} />}
+            {cur && <LegendItem kind="box" color={isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'} label="Hochrechnung" className={soft} />}
           </span>
         </div>
         <div className="px-2 py-3">
           {loading ? <div className={`h-[220px] text-xs flex items-center justify-center ${muted}`}>Lade…</div>
-            : <MonthlyChart months={monthInfos} series={series} theme={theme} />}
+            : <MonthlyChart months={monthInfos} series={series} theme={theme} fmt={fmtChf} axisFmt={fmtAxis}
+                targetLabel="Ziel" maxLabel="Max. Kontingent" pctLabel="Erreicht" />}
         </div>
       </div>
 
@@ -601,16 +385,9 @@ export default function RevenueView() {
         <div className={`flex items-center justify-between rounded-t-xl ${headCls}`}>
           <span>Kumuliert: Ist vs. Ziel</span>
           <span className="flex items-center gap-3 normal-case tracking-normal">
-            <span className="flex items-center gap-1">
-              <span className="inline-block w-3 h-0.5 rounded-full" style={{ background: accent }} />
-              <span className={soft}>Ist</span>
-            </span>
-            {hasTargets && (
-              <span className="flex items-center gap-1">
-                <span className="inline-block w-3 h-0.5 rounded-full" style={{ background: theme.axisText }} />
-                <span className={soft}>Ziel</span>
-              </span>
-            )}
+            <LegendItem kind="line" color={accent} label="Ist" className={soft} />
+            {hasTargets && <LegendItem kind="line" color={theme.axisText} label="Ziel" className={soft} />}
+            {hasMax && <LegendItem kind="dash" color={theme.axisText} label="Max. Kontingent" className={soft} />}
           </span>
         </div>
         <div className="px-2 py-3">
@@ -639,9 +416,9 @@ export default function RevenueView() {
               const curIdx = months.findIndex(ym => stateOf(ym) === 'current');
               const cAct = curIdx >= 0 ? vals[curIdx] : 0;
               const rAct = vals.reduce((s, v, i) => s + (stateOf(months[i]) === 'future' ? 0 : v), 0);
-              const tgt = clientTarget(c, cy, cm, off);
+              const tgt = clientTarget(c, cy, cm, off, start);
               const rSoll = elapsed.reduce((s, mi) =>
-                s + clientTarget(c, mi.ym.y, mi.ym.m, off, mi.state === 'current' ? today : undefined), 0);
+                s + clientTarget(c, mi.ym.y, mi.ym.m, off, start, mi.state === 'current' ? today : undefined), 0);
               const pctCls = (ratio: number) => ratio >= 1 ? statusGood : soft;
               return (
                 <tr key={c.id} className={`border-t ${border} ${clientId !== 'all' && clientId !== c.id ? 'opacity-40' : ''}`}>
@@ -672,6 +449,7 @@ export default function RevenueView() {
         </table>
         <div className={`px-4 py-2 border-t ${border} text-[10px] ${muted}`}>
           Ziele werden im Kunden-Tab erfasst. Umsatz und Ziel zählen nur während des Mandats (Kontingent-Zeitraum des Kunden).
+          {hasMax && ' Max. Kontingent = Kontingentstunden pro Monat × Stundensatz.'}
           {missingRate.length > 0 && ' Umsatz = Stunden × Stundensatz; Kunden ohne Stundensatz zählen nicht zum Umsatz.'}
         </div>
       </div>

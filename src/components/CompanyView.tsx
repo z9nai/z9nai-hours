@@ -27,13 +27,19 @@ export default function CompanyView() {
   const [f, setF] = useState<Company>(company);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => { setF(company); }, [company]);
+  // Kept as text while typing so decimals like "8.4" can be entered
+  const [hoursStr, setHoursStr] = useState('');
+  useEffect(() => {
+    setF(company);
+    setHoursStr(company.hoursPerDay != null ? String(company.hoursPerDay) : '');
+  }, [company]);
 
   const setAddr = (k: keyof Company['address'], v: string) =>
     setF(prev => ({ ...prev, address: { ...prev.address, [k]: v } }));
 
   const save = async () => {
-    await setCompany(f);
+    const t = hoursStr.trim().replace(',', '.');
+    await setCompany({ ...f, hoursPerDay: t === '' ? undefined : Math.max(0, Number(t) || 0) });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -64,6 +70,23 @@ export default function CompanyView() {
           <Field label="E-Mail" value={f.email} onChange={v => setF(p => ({ ...p, email: v }))} placeholder="info@firma.ch" isDark={isDark} />
           <Field label="Telefon" value={f.phone} onChange={v => setF(p => ({ ...p, phone: v }))} placeholder="+41 44 000 00 00" isDark={isDark} />
         </div>
+
+        <div className={`text-[10px] uppercase tracking-wider pt-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>Arbeitszeit</div>
+        <div className="grid grid-cols-2 gap-3 items-end">
+          <div>
+            <label className={`block text-[10px] uppercase tracking-wider mb-1 ${isDark ? 'text-white/40' : 'text-black/40'}`}>Firmenstart</label>
+            <input type="date" value={f.startDate ?? ''}
+              onChange={e => setF(p => ({ ...p, startDate: e.target.value || undefined }))}
+              className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${
+                isDark ? 'bg-white/5 border-white/10 text-white focus:border-white/30 [color-scheme:dark]' : 'bg-black/5 border-black/10 text-black focus:border-black/30'
+              }`} />
+          </div>
+          <Field label="Stunden pro Arbeitstag" value={hoursStr} onChange={setHoursStr} placeholder="8.4" isDark={isDark} />
+        </div>
+        <p className={`text-[11px] -mt-2 ${isDark ? 'text-white/35' : 'text-black/35'}`}>
+          Vor dem Firmenstart werden weder Soll-Arbeitszeit noch Umsatzziele gerechnet.
+          Soll pro Arbeitstag (Mo–Fr); Ferien, Krank und Feiertage reduzieren das Soll.
+        </p>
 
         <div className="pt-2">
           <button onClick={save}

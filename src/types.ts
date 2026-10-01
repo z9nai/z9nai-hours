@@ -17,6 +17,8 @@ export interface Company {
   address: Address;
   email: string;
   phone: string;
+  hoursPerDay?: number; // target working hours per working day (Arbeitszeit)
+  startDate?: string;   // ISO date the company started; nothing before it is evaluated
 }
 
 export interface ContactPerson {
