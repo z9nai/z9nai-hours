@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings } from 'lucide-react';
+import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings, TrendingUp } from 'lucide-react';
 import { useStore } from './store';
 import { TimeEntry } from './types';
 import Calendar from './components/Calendar';
@@ -8,8 +8,9 @@ import ClientsView from './components/ClientsView';
 import CompanyView from './components/CompanyView';
 import ReportsView from './components/ReportsView';
 import AdminView from './components/AdminView';
+import RevenueView from './components/RevenueView';
 
-type View = 'calendar' | 'clients' | 'reports' | 'company' | 'admin';
+type View = 'calendar' | 'clients' | 'reports' | 'revenue' | 'company' | 'admin';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
@@ -80,6 +81,7 @@ export default function App() {
         </span>
         {navBtn('calendar', Clock, 'Stunden')}
         {navBtn('reports', BarChart2, 'Report')}
+        {navBtn('revenue', TrendingUp, 'Umsatz')}
         {navBtn('clients', Users, 'Kunden')}
         {navBtn('company', Building2, 'Firma')}
 
@@ -152,6 +154,10 @@ export default function App() {
         ) : view === 'reports' ? (
           <div className="flex-1 overflow-y-auto">
             <ReportsView />
+          </div>
+        ) : view === 'revenue' ? (
+          <div className="flex-1 overflow-y-auto">
+            <RevenueView />
           </div>
         ) : view === 'admin' ? (
           <div className="flex-1 overflow-y-auto">

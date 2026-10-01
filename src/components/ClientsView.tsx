@@ -91,8 +91,8 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
         <Field label="Ort" value={f.address.city} onChange={v => setAddr('city', v)} placeholder="Zürich" isDark={isDark} />
         <Field label="Land" value={f.address.country} onChange={v => setAddr('country', v)} placeholder="CH" isDark={isDark} />
       </div>
-      <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Kontingent / Kostendach</div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Mandat: Kontingent / Kostendach &amp; Umsatzziel</div>
+      <div className="grid grid-cols-4 gap-3">
         <Field label="Stunden" value={f.quota ? String(f.quota.hours || '') : ''}
           onChange={v => setF(p => {
             const hours = v.trim() === '' ? 0 : Number(v.replace(',', '.')) || 0;
@@ -115,7 +115,16 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
               isDark ? 'bg-white/5 border-white/10 text-white focus:border-white/30' : 'bg-black/5 border-black/10 text-black focus:border-black/30'
             }`} />
         </div>
+        <Field label="Umsatzziel / Monat (CHF)" value={f.revenueTarget != null ? String(f.revenueTarget) : ''}
+          onChange={v => {
+            const t = v.replace(/['’\s]/g, '').replace(',', '.');
+            setF(p => ({ ...p, revenueTarget: t === '' ? undefined : Math.max(0, Number(t) || 0) }));
+          }}
+          placeholder="18000" isDark={isDark} />
       </div>
+      <p className={`text-[10px] -mt-1 ${labelCls}`}>
+        Das Umsatzziel und der Umsatz zählen im Umsatz-Tab nur während des Mandats (Von – Bis); angebrochene Monate anteilig.
+      </p>
 
       <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Zusatzfeld für Einträge</div>
       <div className="grid grid-cols-2 gap-3 items-end">
@@ -245,6 +254,7 @@ export default function ClientsView() {
                       <div className={`text-[11px] mt-0.5 ${textMuted}`}>
                         {c.uid && <span className="mr-3">{c.uid}</span>}
                         {c.hourlyRate != null && <span className="mr-3">CHF {c.hourlyRate}/h</span>}
+                        {c.revenueTarget != null && <span className="mr-3">Umsatzziel CHF {c.revenueTarget.toLocaleString('de-CH')}/Mt.</span>}
                         {c.quota && <span className="mr-3">Kontingent {c.quota.hours}h ({fmtIso(c.quota.from)}–{fmtIso(c.quota.to)})</span>}
                         {c.address.street && <span>{c.address.street}, {c.address.zip} {c.address.city}</span>}
                       </div>

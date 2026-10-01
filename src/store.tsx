@@ -23,6 +23,7 @@ interface StoreCtx {
   entries: TimeEntry[];
   projects: Record<string, string[]>; // clientId → projects, most recently used first
   extras: Record<string, string[]>;   // clientId → extra-field values, most recently used first
+  vacations: string[];                // ISO dates marked as Ferien (sorted)
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
@@ -35,6 +36,7 @@ interface StoreCtx {
   deleteEntry: (id: string) => void;
   touchProject: (clientId: string, project: string) => void;
   touchExtra: (clientId: string, value: string) => void;
+  toggleVacation: (date: string) => void;
   pickDirectory: () => Promise<void>;
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
@@ -48,7 +50,7 @@ interface StoreCtx {
 }
 
 const GIT_COMMIT_DELAY_MS = 10_000; // collect changes, then one commit
-const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras)\.json$/;
+const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|vacations)\.json$/;
 
 type YM = { year: number; month: number };
 
@@ -215,6 +217,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [projects, setProjects] = useState<Record<string, string[]>>({});
   const [extras, setExtras] = useState<Record<string, string[]>>({});
+  const [vacations, setVacations] = useState<string[]>([]);
   const [currentMonth, setCurrentMonth] = useState<YM>({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [ioError, setIoError] = useState<string | null>(null);
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
@@ -397,16 +400,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loadAll = useCallback(async (dir: FileSystemDirectoryHandle) => {
-    const [c, cl, pr, ex] = await Promise.all([
+    const [c, cl, pr, ex, va] = await Promise.all([
       readJson<Company>(dir, 'company.json', DEFAULT_COMPANY),
       readJson<Client[]>(dir, 'clients.json', []),
       readJson<Record<string, string[]>>(dir, 'projects.json', {}),
       readJson<Record<string, string[]>>(dir, 'extras.json', {}),
+      readJson<string[]>(dir, 'vacations.json', []),
     ]);
     setCompanyState(c);
     setClientsState(cl);
     setProjects(pr);
     setExtras(ex);
+    setVacations(Array.isArray(va) ? va : []);
     await loadWanted(dir);
   }, [loadWanted]);
 
@@ -568,6 +573,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     touchMru(setExtras, 'extras.json', clientId, value);
   }, []);
 
+  const toggleVacation = useCallback((date: string) => {
+    setVacations(prev => {
+      const updated = prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date].sort();
+      if (dirRef.current) {
+        writeData(dirRef.current, 'vacations.json', updated)
+          .catch(e => fail('Speichern von vacations.json fehlgeschlagen', e));
+      }
+      return updated;
+    });
+  }, []);
+
   // For reports: in-memory content if the month is loaded (includes unsaved
   // changes), otherwise read from disk — in queue order after pending writes.
   const readMonthEntries = useCallback(async (year: number, month: number): Promise<TimeEntry[]> => {
@@ -607,8 +623,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, projects, extras, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
-      setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra,
+      company, clients, entries, projects, extras, vacations, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
+      setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra, toggleVacation,
       pickDirectory, reconnectDirectory, toggleTheme, showMonths, readMonthEntries,
       gitConfig, setGitConfig, gitStatus, commitNow, commitAllData,
     }}>

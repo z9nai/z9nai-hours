@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, Check, TreePalm } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
 import { clientColorClasses } from '../colors';
@@ -110,7 +110,7 @@ interface Props {
 }
 
 export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
-  const { entries, isDark, clients, addEntry, updateEntry, showMonths } = useStore();
+  const { entries, isDark, clients, addEntry, updateEntry, showMonths, vacations, toggleVacation } = useStore();
   const [weekOffset, setWeekOffset] = useState(0);
   const days = getWeekDays(weekOffset);
 
@@ -399,11 +399,25 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
         {days.map((d, i) => {
           const iso = dateToISO(d);
           const isToday = iso === today;
+          const isVacation = vacations.includes(iso);
           const dayTotal = fmtMins(dayMins[i]);
           return (
-            <div key={i} className={`flex-1 text-center py-1.5 text-xs ${isToday ? (isDark ? 'text-blue-400' : 'text-blue-600') : textMuted}`}>
+            <div key={i} className={`group relative flex-1 text-center py-1.5 text-xs ${isToday ? (isDark ? 'text-blue-400' : 'text-blue-600') : textMuted}`}>
+              {/* Ferien: excluded from the revenue forecast */}
+              <button
+                onClick={() => toggleVacation(iso)}
+                title={isVacation ? 'Ferien entfernen' : 'Als Ferien markieren'}
+                className={`absolute top-1 right-1 p-0.5 rounded transition-opacity ${
+                  isVacation
+                    ? (isDark ? 'text-cyan-400' : 'text-cyan-600')
+                    : `opacity-0 group-hover:opacity-100 ${isDark ? 'text-white/30 hover:text-white/70' : 'text-black/30 hover:text-black/70'}`
+                }`}
+              ><TreePalm size={12} /></button>
               <div className="font-semibold truncate px-1">{DAY_NAMES[i]}</div>
               <div className={`text-[11px] ${isToday ? 'font-bold' : ''}`}>{d.getDate()}</div>
+              {isVacation && (
+                <div className={`text-[10px] mt-0.5 ${isDark ? 'text-cyan-400/80' : 'text-cyan-700/80'}`}>Ferien</div>
+              )}
               {dayTotal && (
                 <div className={`text-[10px] tabular-nums mt-0.5 ${isToday ? (isDark ? 'text-blue-400/70' : 'text-blue-600/70') : (isDark ? 'text-white/20' : 'text-black/20')}`}>
                   {dayTotal}
@@ -433,9 +447,16 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           {days.map((day, dayIdx) => {
             // Render entries whose LIVE position lands in this column
             const dayEntries = displayEntries.filter(e => livePos(e).dayIdx === dayIdx);
+            const isVacation = vacations.includes(dateToISO(day));
 
             return (
               <div key={dayIdx} className={`flex-1 relative border-l ${border}`}>
+                {isVacation && (
+                  <div className="absolute inset-0 pointer-events-none"
+                    style={{
+                      backgroundImage: `repeating-linear-gradient(45deg, ${isDark ? 'rgba(34,211,238,0.06)' : 'rgba(8,145,178,0.07)'} 0 6px, transparent 6px 14px)`,
+                    }} />
+                )}
 
                 {/* Background slot grid (for new-entry drag-selection) */}
                 {Array.from({ length: TOTAL_SLOTS }, (_, slot) => {
