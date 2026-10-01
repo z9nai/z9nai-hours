@@ -17,11 +17,11 @@ const fmtAxisH = (v: number) => `${Math.round(v)}`;
 function absentByType(off: Absences, { y, m }: YM): Partial<Record<AbsenceType, number>> {
   const prefix = `${y}-${String(m).padStart(2, '0')}-`;
   const out: Partial<Record<AbsenceType, number>> = {};
-  for (const [iso, a] of Object.entries(off)) {
+  for (const [iso, list] of Object.entries(off)) {
     if (!iso.startsWith(prefix)) continue;
     const wd = new Date(iso + 'T00:00:00').getDay();
     if (wd === 0 || wd === 6) continue;
-    out[a.type] = (out[a.type] ?? 0) + absenceDays(a);
+    for (const a of list) out[a.type] = (out[a.type] ?? 0) + absenceDays([a]);
   }
   return out;
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarPlus, MousePointerClick, Trash2, X } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
-import { ABSENCE_TYPES, blocksBooking } from '../absences';
+import { absenceLabel, blocksBooking } from '../absences';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
@@ -94,7 +94,7 @@ export default function EntryPanel({ entry, onClose, onNew }: Props) {
             Klicke auf einen Eintrag, um ihn zu bearbeiten.
           </p>
           <button onClick={newForToday} disabled={!!todayAbsence}
-            title={todayAbsence ? `Heute: ${ABSENCE_TYPES[todayAbsence.type].label} – keine Buchung möglich` : undefined}
+            title={todayAbsence ? `Heute: ${absenceLabel(todayAbsence)} – keine Buchung möglich` : undefined}
             className={`mt-2 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border transition-colors disabled:opacity-40 disabled:pointer-events-none ${
               isDark ? 'border-white/15 text-white/50 hover:border-white/30 hover:text-white' : 'border-black/15 text-black/50 hover:border-black/30 hover:text-black'
             }`}>
@@ -205,7 +205,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
             onChange={e => {
               const a = absences[e.target.value];
               // Moving onto a full-day absence is not allowed
-              if (e.target.value !== form.date && blocksBooking(a)) { setDateBlocked(ABSENCE_TYPES[a.type].label); return; }
+              if (e.target.value !== form.date && blocksBooking(a)) { setDateBlocked(absenceLabel(a)); return; }
               setDateBlocked(null);
               set('date', e.target.value);
             }}

@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Copy, Check, CalendarOff } from 'lucide-react';
-import { Absence, TimeEntry } from '../types';
+import { AbsenceType, TimeEntry } from '../types';
 import { useStore } from '../store';
 import { clientColorClasses } from '../colors';
-import { ABSENCE_ORDER, ABSENCE_TYPES, blocksBooking } from '../absences';
+import { ABSENCE_ORDER, ABSENCE_TYPES, DayAbsences, absenceLabel, blocksBooking } from '../absences';
 
 const HOUR_START = 5;
 const HOUR_END = 23;
@@ -95,11 +95,11 @@ const DAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'S
 const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
-// ── Absence menu: Ferien / Krank / Feiertag, full or half day ──────────────
+// ── Absence menu: Ferien / Krank / Feiertag, a full day or up to two halves ──
 function AbsenceMenu({ value, hasEntries, onChange, onClose, isDark }: {
-  value: Absence | undefined;
-  hasEntries: boolean; // a full-day absence is not possible on a day with bookings
-  onChange: (a: Absence | null) => void;
+  value: DayAbsences;
+  hasEntries: boolean; // a full day off (also 2× ½) is not possible on a day with bookings
+  onChange: (list: DayAbsences | null) => void;
   onClose: () => void;
   isDark: boolean;
 }) {
@@ -111,7 +111,19 @@ function AbsenceMenu({ value, hasEntries, onChange, onClose, isDark }: {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [onClose]);
-  const pick = (a: Absence | null) => { onChange(a); onClose(); };
+
+  const halves = value.filter(a => a.half);
+  const isFull = (t: AbsenceType) => value.some(a => a.type === t && !a.half);
+  const isHalf = (t: AbsenceType) => halves.some(a => a.type === t);
+  // ½ toggles that type's half day; a second half of another type completes the day.
+  // The menu stays open so a second half can be picked right away.
+  const toggleHalf = (t: AbsenceType) => {
+    if (isHalf(t)) onChange(halves.filter(a => a.type !== t));
+    else onChange([...halves, { type: t, half: true }]);
+  };
+  // Adding a half to an existing half makes a full day: same rules as "Ganz"
+  const halfDisabled = (t: AbsenceType) => !isHalf(t) && (halves.length >= 2 || (halves.length === 1 && hasEntries));
+
   const chip = (active: boolean) => `text-[10px] px-2 py-0.5 rounded border transition-colors disabled:opacity-30 disabled:pointer-events-none ${
     active
       ? isDark ? 'bg-white/15 border-white/30 text-white' : 'bg-black/10 border-black/30 text-black'
@@ -119,7 +131,7 @@ function AbsenceMenu({ value, hasEntries, onChange, onClose, isDark }: {
   }`;
   return (
     <div ref={ref}
-      className={`absolute top-full right-0 mt-1 z-50 w-48 rounded-lg border shadow-lg p-1.5 text-left ${
+      className={`absolute top-full right-0 mt-1 z-50 w-52 rounded-lg border shadow-lg p-1.5 text-left ${
         isDark ? 'bg-[#1a1b20] border-white/10' : 'bg-white border-black/10'
       }`}>
       {ABSENCE_ORDER.map(t => {
@@ -130,19 +142,22 @@ function AbsenceMenu({ value, hasEntries, onChange, onClose, isDark }: {
             <Icon size={12} className={isDark ? cfg.text : cfg.textLight} />
             <span className={`flex-1 text-xs ${isDark ? 'text-white/80' : 'text-black/80'}`}>{cfg.label}</span>
             <span title={hasEntries ? 'Tag hat bereits Buchungen' : undefined}>
-              <button className={chip(value?.type === t && !value.half)} disabled={hasEntries} onClick={() => pick({ type: t })}>Ganz</button>
+              <button className={chip(isFull(t))} disabled={hasEntries}
+                onClick={() => { onChange([{ type: t }]); onClose(); }}>Ganz</button>
             </span>
-            <button className={chip(value?.type === t && !!value.half)} onClick={() => pick({ type: t, half: true })}>½</button>
+            <span title={halfDisabled(t) && hasEntries ? 'Tag hat bereits Buchungen' : undefined}>
+              <button className={chip(isHalf(t))} disabled={halfDisabled(t)} onClick={() => toggleHalf(t)}>½</button>
+            </span>
           </div>
         );
       })}
-      {hasEntries && (
-        <div className={`px-1.5 pt-1 text-[10px] leading-snug ${isDark ? 'text-white/35' : 'text-black/40'}`}>
-          Ganzer Tag nicht möglich – es gibt bereits Buchungen.
-        </div>
-      )}
-      {value && (
-        <button onClick={() => pick(null)}
+      <div className={`px-1.5 pt-1 text-[10px] leading-snug ${isDark ? 'text-white/35' : 'text-black/40'}`}>
+        {hasEntries
+          ? 'Ganzer Tag (auch 2× ½) nicht möglich – es gibt bereits Buchungen.'
+          : 'Zwei halbe Tage ergeben einen ganzen – dann ist keine Buchung mehr möglich.'}
+      </div>
+      {value.length > 0 && (
+        <button onClick={() => { onChange(null); onClose(); }}
           className={`w-full mt-1 pt-1.5 border-t text-xs text-left px-1.5 py-1 transition-colors ${
             isDark ? 'border-white/10 text-white/50 hover:text-red-400' : 'border-black/10 text-black/50 hover:text-red-500'
           }`}>
@@ -469,9 +484,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
         {days.map((d, i) => {
           const iso = dateToISO(d);
           const isToday = iso === today;
-          const absence = absences[iso];
-          const absCfg = absence && ABSENCE_TYPES[absence.type];
-          const AbsIcon = absCfg ? absCfg.icon : CalendarOff;
+          const dayAbs = absences[iso] ?? [];
           const dayTotal = fmtMins(dayMins[i]);
           return (
             <div key={i} className={`group relative flex-1 text-center py-1.5 text-xs ${isToday ? (isDark ? 'text-blue-400' : 'text-blue-600') : textMuted}`}>
@@ -479,21 +492,35 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
               <button
                 onMouseDown={e => e.stopPropagation()} // keep the menu's outside-click handler from re-opening it
                 onClick={() => setAbsenceMenu(m => (m === iso ? null : iso))}
-                title={absCfg ? `${absCfg.label}${absence!.half ? ' (halber Tag)' : ''} – ändern` : 'Abwesenheit markieren'}
-                className={`absolute top-1 right-1 p-0.5 rounded transition-opacity ${
-                  absCfg
-                    ? (isDark ? absCfg.text : absCfg.textLight)
+                title={dayAbs.length > 0 ? `${absenceLabel(dayAbs)} – ändern` : 'Abwesenheit markieren'}
+                className={`absolute top-1 right-1 p-0.5 rounded flex gap-0.5 transition-opacity ${
+                  dayAbs.length > 0
+                    ? ''
                     : `${absenceMenu === iso ? '' : 'opacity-0'} group-hover:opacity-100 ${isDark ? 'text-white/30 hover:text-white/70' : 'text-black/30 hover:text-black/70'}`
                 }`}
-              ><AbsIcon size={12} /></button>
+              >
+                {dayAbs.length === 0 && <CalendarOff size={12} />}
+                {dayAbs.map(a => {
+                  const cfg = ABSENCE_TYPES[a.type];
+                  const Icon = cfg.icon;
+                  return <Icon key={a.type} size={12} className={isDark ? cfg.text : cfg.textLight} />;
+                })}
+              </button>
               {absenceMenu === iso && (
-                <AbsenceMenu value={absence} hasEntries={dayMins[i] > 0 && !blocksBooking(absence)} onChange={a => setAbsence(iso, a)} onClose={closeAbsenceMenu} isDark={isDark} />
+                <AbsenceMenu value={dayAbs} hasEntries={dayMins[i] > 0} onChange={list => setAbsence(iso, list)} onClose={closeAbsenceMenu} isDark={isDark} />
               )}
               <div className="font-semibold truncate px-1">{DAY_NAMES[i]}</div>
               <div className={`text-[11px] ${isToday ? 'font-bold' : ''}`}>{d.getDate()}</div>
-              {absCfg && (
-                <div className={`text-[10px] mt-0.5 opacity-80 ${isDark ? absCfg.text : absCfg.textLight}`}>
-                  {absCfg.label}{absence!.half ? ' ½' : ''}
+              {dayAbs.length > 0 && (
+                <div className="text-[10px] mt-0.5 opacity-80 truncate px-1">
+                  {dayAbs.map((a, j) => {
+                    const cfg = ABSENCE_TYPES[a.type];
+                    return (
+                      <span key={a.type} className={isDark ? cfg.text : cfg.textLight}>
+                        {j > 0 && ' + '}{cfg.label}{a.half ? ' ½' : ''}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
               {dayTotal && (
@@ -525,18 +552,20 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           {days.map((day, dayIdx) => {
             // Render entries whose LIVE position lands in this column
             const dayEntries = displayEntries.filter(e => livePos(e).dayIdx === dayIdx);
-            const absence = absences[dateToISO(day)];
-            const blocked = blocksBooking(absence);
+            const dayAbs = absences[dateToISO(day)] ?? [];
+            const blocked = blocksBooking(dayAbs);
+            const stripes = dayAbs.map(a => (isDark ? ABSENCE_TYPES[a.type].stripe : ABSENCE_TYPES[a.type].stripeLight));
 
             return (
               <div key={dayIdx} className={`flex-1 relative border-l ${border}`}>
-                {absence && (
+                {dayAbs.length > 0 && (
                   <div className="absolute inset-0 pointer-events-none"
                     style={{
-                      opacity: absence.half ? 0.5 : 1,
-                      backgroundImage: `repeating-linear-gradient(45deg, ${
-                        isDark ? ABSENCE_TYPES[absence.type].stripe : ABSENCE_TYPES[absence.type].stripeLight
-                      } 0 6px, transparent 6px 14px)`,
+                      // single half day: lighter; two halves: their stripes alternate
+                      opacity: blocked ? 1 : 0.5,
+                      backgroundImage: stripes.length > 1
+                        ? `repeating-linear-gradient(45deg, ${stripes[0]} 0 6px, transparent 6px 14px, ${stripes[1]} 14px 20px, transparent 20px 28px)`
+                        : `repeating-linear-gradient(45deg, ${stripes[0]} 0 6px, transparent 6px 14px)`,
                     }} />
                 )}
 

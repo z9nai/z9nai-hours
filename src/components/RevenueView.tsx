@@ -220,10 +220,10 @@ export default function RevenueView() {
   const wdElapsed = workdays(cy, cm, off, today, start);
   // Absent working days of the running month, per type (for the forecast tile)
   const absentByType: Partial<Record<AbsenceType, number>> = {};
-  for (const [iso, a] of Object.entries(off)) {
+  for (const [iso, list] of Object.entries(off)) {
     const d = new Date(iso + 'T00:00:00');
     if (d.getFullYear() !== cy || d.getMonth() + 1 !== cm || d.getDay() === 0 || d.getDay() === 6) continue;
-    absentByType[a.type] = (absentByType[a.type] ?? 0) + absenceDays(a);
+    for (const a of list) absentByType[a.type] = (absentByType[a.type] ?? 0) + absenceDays([a]);
   }
   const absentLabel = ABSENCE_ORDER
     .filter(t => absentByType[t])

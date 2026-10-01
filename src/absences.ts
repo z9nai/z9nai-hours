@@ -16,8 +16,20 @@ export const ABSENCE_TYPES: Record<AbsenceType, {
 
 export const ABSENCE_ORDER: AbsenceType[] = ['ferien', 'krank', 'feiertag'];
 
-// Share of a working day that is off: 1 for a full day, 0.5 for a half day
-export const absenceDays = (a: Absence | undefined) => (a ? (a.half ? 0.5 : 1) : 0);
+// A day holds one full-day absence or up to two half-day absences
+// (e.g. ½ Ferien + ½ Feiertag)
+export type DayAbsences = Absence[];
 
-// A full-day absence blocks new bookings on that day (half days don't)
-export const blocksBooking = (a: Absence | undefined) => !!a && !a.half;
+// Older absences.json files stored a single object per day
+export const toDayAbsences = (v: unknown): DayAbsences =>
+  Array.isArray(v) ? v : v && typeof v === 'object' ? [v as Absence] : [];
+
+// Share of a working day that is off: a full day 1, each half 0.5 (max 1)
+export const absenceDays = (list: DayAbsences | undefined) =>
+  Math.min(1, (list ?? []).reduce((s, a) => s + (a.half ? 0.5 : 1), 0));
+
+export const absenceLabel = (list: DayAbsences) =>
+  list.map(a => `${ABSENCE_TYPES[a.type].label}${a.half ? ' ½' : ''}`).join(' + ');
+
+// A full day off (one full-day absence or two halves) blocks new bookings
+export const blocksBooking = (list: DayAbsences | undefined) => absenceDays(list) >= 1;

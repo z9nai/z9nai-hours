@@ -1,6 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { Absence } from '../types';
-import { absenceDays } from '../absences';
+import { DayAbsences, absenceDays } from '../absences';
 import { clientColorClasses } from '../colors';
 
 // Shared building blocks for the Umsatz and Arbeitszeit views
@@ -11,7 +10,7 @@ export const MONTH_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'A
 
 export type YM = { y: number; m: number };
 export type MonthState = 'past' | 'current' | 'future';
-export type Absences = Record<string, Absence>;
+export type Absences = Record<string, DayAbsences>;
 
 export function parseMins(time: string): number {
   const [h, m] = time.split(':').map(Number);

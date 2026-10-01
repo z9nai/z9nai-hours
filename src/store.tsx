@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Absence, Client, Company, MonthData, TimeEntry } from './types';
+import { DayAbsences, toDayAbsences } from './absences';
 import { GitConfig, commitFiles, loadGitConfig, saveGitConfig } from './git';
 
 export interface GitStatus {
@@ -23,7 +24,7 @@ interface StoreCtx {
   entries: TimeEntry[];
   projects: Record<string, string[]>; // clientId → projects, most recently used first
   extras: Record<string, string[]>;   // clientId → extra-field values, most recently used first
-  absences: Record<string, Absence>;  // ISO date → Ferien / Krank / Feiertag (full or half day)
+  absences: Record<string, DayAbsences>; // ISO date → Ferien / Krank / Feiertag (one full day or up to two halves)
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
@@ -36,7 +37,7 @@ interface StoreCtx {
   deleteEntry: (id: string) => void;
   touchProject: (clientId: string, project: string) => void;
   touchExtra: (clientId: string, value: string) => void;
-  setAbsence: (date: string, absence: Absence | null) => void;
+  setAbsence: (date: string, absences: DayAbsences | null) => void;
   pickDirectory: () => Promise<void>;
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
@@ -217,7 +218,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [projects, setProjects] = useState<Record<string, string[]>>({});
   const [extras, setExtras] = useState<Record<string, string[]>>({});
-  const [absences, setAbsences] = useState<Record<string, Absence>>({});
+  const [absences, setAbsences] = useState<Record<string, DayAbsences>>({});
   const [currentMonth, setCurrentMonth] = useState<YM>({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [ioError, setIoError] = useState<string | null>(null);
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
@@ -405,19 +406,24 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       readJson<Client[]>(dir, 'clients.json', []),
       readJson<Record<string, string[]>>(dir, 'projects.json', {}),
       readJson<Record<string, string[]>>(dir, 'extras.json', {}),
-      readJson<Record<string, Absence> | null>(dir, 'absences.json', null),
+      readJson<Record<string, unknown> | null>(dir, 'absences.json', null),
     ]);
     setCompanyState(c);
     setClientsState(cl);
     setProjects(pr);
     setExtras(ex);
     if (va) {
-      setAbsences(va);
+      const norm: Record<string, DayAbsences> = {};
+      for (const [d, v] of Object.entries(va)) {
+        const list = toDayAbsences(v);
+        if (list.length > 0) norm[d] = list;
+      }
+      setAbsences(norm);
     } else {
       // Migrate the earlier vacations.json (list of full Ferien days)
       const old = await readJson<string[]>(dir, 'vacations.json', []);
-      const migrated: Record<string, Absence> = {};
-      for (const d of Array.isArray(old) ? old : []) migrated[d] = { type: 'ferien' };
+      const migrated: Record<string, DayAbsences> = {};
+      for (const d of Array.isArray(old) ? old : []) migrated[d] = [{ type: 'ferien' }];
       setAbsences(migrated);
       if (Object.keys(migrated).length > 0) await writeData(dir, 'absences.json', migrated);
     }
@@ -582,10 +588,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     touchMru(setExtras, 'extras.json', clientId, value);
   }, []);
 
-  const setAbsence = useCallback((date: string, absence: Absence | null) => {
+  const setAbsence = useCallback((date: string, list: DayAbsences | null) => {
     setAbsences(prev => {
       const { [date]: _, ...rest } = prev;
-      const merged: Record<string, Absence> = absence ? { ...rest, [date]: absence } : rest;
+      const merged: Record<string, DayAbsences> = list && list.length > 0 ? { ...rest, [date]: list } : rest;
       // Keep the file sorted by date
       const updated = Object.fromEntries(Object.entries(merged).sort(([a], [b]) => a.localeCompare(b)));
       if (dirRef.current) {
