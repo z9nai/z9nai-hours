@@ -18,3 +18,6 @@ export const ABSENCE_ORDER: AbsenceType[] = ['ferien', 'krank', 'feiertag'];
 
 // Share of a working day that is off: 1 for a full day, 0.5 for a half day
 export const absenceDays = (a: Absence | undefined) => (a ? (a.half ? 0.5 : 1) : 0);
+
+// A full-day absence blocks new bookings on that day (half days don't)
+export const blocksBooking = (a: Absence | undefined) => !!a && !a.half;

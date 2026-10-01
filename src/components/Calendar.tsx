@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Copy, Check, CalendarOff } from 'lucide-reac
 import { Absence, TimeEntry } from '../types';
 import { useStore } from '../store';
 import { clientColorClasses } from '../colors';
-import { ABSENCE_ORDER, ABSENCE_TYPES } from '../absences';
+import { ABSENCE_ORDER, ABSENCE_TYPES, blocksBooking } from '../absences';
 
 const HOUR_START = 5;
 const HOUR_END = 23;
@@ -96,8 +96,9 @@ const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
 // ── Absence menu: Ferien / Krank / Feiertag, full or half day ──────────────
-function AbsenceMenu({ value, onChange, onClose, isDark }: {
+function AbsenceMenu({ value, hasEntries, onChange, onClose, isDark }: {
   value: Absence | undefined;
+  hasEntries: boolean; // a full-day absence is not possible on a day with bookings
   onChange: (a: Absence | null) => void;
   onClose: () => void;
   isDark: boolean;
@@ -111,7 +112,7 @@ function AbsenceMenu({ value, onChange, onClose, isDark }: {
     return () => document.removeEventListener('mousedown', handler);
   }, [onClose]);
   const pick = (a: Absence | null) => { onChange(a); onClose(); };
-  const chip = (active: boolean) => `text-[10px] px-2 py-0.5 rounded border transition-colors ${
+  const chip = (active: boolean) => `text-[10px] px-2 py-0.5 rounded border transition-colors disabled:opacity-30 disabled:pointer-events-none ${
     active
       ? isDark ? 'bg-white/15 border-white/30 text-white' : 'bg-black/10 border-black/30 text-black'
       : isDark ? 'border-white/10 text-white/50 hover:border-white/30 hover:text-white' : 'border-black/10 text-black/50 hover:border-black/30 hover:text-black'
@@ -128,11 +129,18 @@ function AbsenceMenu({ value, onChange, onClose, isDark }: {
           <div key={t} className="flex items-center gap-2 px-1.5 py-1">
             <Icon size={12} className={isDark ? cfg.text : cfg.textLight} />
             <span className={`flex-1 text-xs ${isDark ? 'text-white/80' : 'text-black/80'}`}>{cfg.label}</span>
-            <button className={chip(value?.type === t && !value.half)} onClick={() => pick({ type: t })}>Ganz</button>
+            <span title={hasEntries ? 'Tag hat bereits Buchungen' : undefined}>
+              <button className={chip(value?.type === t && !value.half)} disabled={hasEntries} onClick={() => pick({ type: t })}>Ganz</button>
+            </span>
             <button className={chip(value?.type === t && !!value.half)} onClick={() => pick({ type: t, half: true })}>½</button>
           </div>
         );
       })}
+      {hasEntries && (
+        <div className={`px-1.5 pt-1 text-[10px] leading-snug ${isDark ? 'text-white/35' : 'text-black/40'}`}>
+          Ganzer Tag nicht möglich – es gibt bereits Buchungen.
+        </div>
+      )}
       {value && (
         <button onClick={() => pick(null)}
           className={`w-full mt-1 pt-1.5 border-t text-xs text-left px-1.5 py-1 transition-colors ${
@@ -194,6 +202,11 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
   const entriesRef = useRef(displayEntries);
   useEffect(() => { entriesRef.current = displayEntries; }, [displayEntries]);
 
+  // Days with a full-day absence take no new bookings
+  const absencesRef = useRef(absences);
+  useEffect(() => { absencesRef.current = absences; }, [absences]);
+  const isBlocked = useCallback((iso: string) => blocksBooking(absencesRef.current[iso]), []);
+
   // ── Copy flash state ─────────────────────────────────────────────────────
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -202,13 +215,14 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
     const duration = timeToSlot(entry.endTime) - timeToSlot(entry.startTime);
     // Try right after the original on the same day, then earlier gaps, then next days
     let targetDate = entry.date;
-    let freeStart = findFreeSlot(entry.date, duration, timeToSlot(entry.endTime), entriesRef.current);
+    let freeStart = isBlocked(entry.date) ? -1 : findFreeSlot(entry.date, duration, timeToSlot(entry.endTime), entriesRef.current);
     if (freeStart < 0) {
       // Day is full — walk forward up to 7 days
       const [dy, dm, dd] = entry.date.split('-').map(Number);
       for (let offset = 1; offset <= 7; offset++) {
         const next = new Date(dy, dm - 1, dd + offset);
         targetDate = dateToISO(next);
+        if (isBlocked(targetDate)) continue;
         freeStart = findFreeSlot(targetDate, duration, timeToSlot(entry.startTime), entriesRef.current);
         if (freeStart >= 0) break;
       }
@@ -225,7 +239,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
     setCopiedId(entry.id);
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     copyTimerRef.current = setTimeout(() => setCopiedId(null), 1200);
-  }, [addEntry]);
+  }, [addEntry, isBlocked]);
 
   // ── Tooltip ───────────────────────────────────────────────────────────────
   const [hoveredEntry, setHoveredEntry] = useState<TimeEntry | null>(null);
@@ -278,7 +292,8 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
         if (cur.dayIdx !== dayIdx) return; // selection stays in one column
         next = { ...cur, endSlot: slot };
       } else if (cur.kind === 'move') {
-        next = { ...cur, currentDayIdx: dayIdx, currentSlot: slot };
+        const blocked = isBlocked(dateToISO(days[dayIdx])) && dateToISO(days[dayIdx]) !== cur.entry.date;
+        next = { ...cur, currentDayIdx: blocked ? cur.currentDayIdx : dayIdx, currentSlot: slot };
         didMoveRef.current = true;
       } else {
         // resize-top / resize-bottom
@@ -306,7 +321,9 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           const requested = clamp(slot - cur.slotOffset, 0, TOTAL_SLOTS - duration);
           const targetDate = dateToISO(days[cur.currentDayIdx]);
           // Find nearest free slot on the target day (excluding the entry being moved)
-          const freeStart = findFreeSlot(targetDate, duration, requested, snap, cur.entry.id);
+          const freeStart = isBlocked(targetDate) && targetDate !== cur.entry.date
+            ? -1
+            : findFreeSlot(targetDate, duration, requested, snap, cur.entry.id);
           if (freeStart >= 0) {
             updateEntry({
               ...cur.entry,
@@ -356,7 +373,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [days, mouseToSlotDay, onSelect, onEditEntry, updateEntry]);
+  }, [days, mouseToSlotDay, onSelect, onEditEntry, updateEntry, isBlocked]);
 
   // ── Live position of an entry during drag/resize ──────────────────────────
   const livePos = (entry: TimeEntry) => {
@@ -470,7 +487,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                 }`}
               ><AbsIcon size={12} /></button>
               {absenceMenu === iso && (
-                <AbsenceMenu value={absence} onChange={a => setAbsence(iso, a)} onClose={closeAbsenceMenu} isDark={isDark} />
+                <AbsenceMenu value={absence} hasEntries={dayMins[i] > 0 && !blocksBooking(absence)} onChange={a => setAbsence(iso, a)} onClose={closeAbsenceMenu} isDark={isDark} />
               )}
               <div className="font-semibold truncate px-1">{DAY_NAMES[i]}</div>
               <div className={`text-[11px] ${isToday ? 'font-bold' : ''}`}>{d.getDate()}</div>
@@ -509,6 +526,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
             // Render entries whose LIVE position lands in this column
             const dayEntries = displayEntries.filter(e => livePos(e).dayIdx === dayIdx);
             const absence = absences[dateToISO(day)];
+            const blocked = blocksBooking(absence);
 
             return (
               <div key={dayIdx} className={`flex-1 relative border-l ${border}`}>
@@ -532,9 +550,10 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                   return (
                     <div
                       key={slot}
-                      className={`cal-slot ${inSel ? 'selecting' : ''} ${isHourBorder ? `border-t ${border}` : ''}`}
+                      className={`cal-slot ${inSel ? 'selecting' : ''} ${isHourBorder ? `border-t ${border}` : ''} ${blocked ? 'cursor-not-allowed' : ''}`}
                       style={{ height: SLOT_HEIGHT }}
                       onMouseDown={() => {
+                        if (blocked) return; // full-day absence: no new bookings
                         didMoveRef.current = false;
                         const next: Interaction = { kind: 'select', dayIdx, startSlot: slot, endSlot: slot };
                         iaRef.current = next;

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarPlus, MousePointerClick, Trash2, X } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
+import { ABSENCE_TYPES, blocksBooking } from '../absences';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
@@ -64,12 +65,13 @@ function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls
 }
 
 export default function EntryPanel({ entry, onClose, onNew }: Props) {
-  const { isDark } = useStore();
+  const { isDark, absences } = useStore();
 
   if (!entry) {
+    const now = new Date();
+    const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const todayAbsence = blocksBooking(absences[iso]) ? absences[iso] : undefined;
     const newForToday = () => {
-      const now = new Date();
-      const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const h = Math.min(Math.max(now.getHours(), 5), 22);
       const start = `${String(h).padStart(2, '0')}:00`;
       const end = `${String(h + 1).padStart(2, '0')}:00`;
@@ -91,8 +93,9 @@ export default function EntryPanel({ entry, onClose, onNew }: Props) {
             um einen neuen Eintrag zu erstellen.<br />
             Klicke auf einen Eintrag, um ihn zu bearbeiten.
           </p>
-          <button onClick={newForToday}
-            className={`mt-2 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border transition-colors ${
+          <button onClick={newForToday} disabled={!!todayAbsence}
+            title={todayAbsence ? `Heute: ${ABSENCE_TYPES[todayAbsence.type].label} – keine Buchung möglich` : undefined}
+            className={`mt-2 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border transition-colors disabled:opacity-40 disabled:pointer-events-none ${
               isDark ? 'border-white/15 text-white/50 hover:border-white/30 hover:text-white' : 'border-black/15 text-black/50 hover:border-black/30 hover:text-black'
             }`}>
             <CalendarPlus size={12} /> Neuer Eintrag
@@ -106,7 +109,8 @@ export default function EntryPanel({ entry, onClose, onNew }: Props) {
 }
 
 function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }) {
-  const { clients, entries, projects, extras, updateEntry, deleteEntry, touchProject, touchExtra, isDark } = useStore();
+  const { clients, entries, projects, extras, updateEntry, deleteEntry, touchProject, touchExtra, isDark, absences } = useStore();
+  const [dateBlocked, setDateBlocked] = useState<string | null>(null); // label of the absence that blocked a date change
 
   const [form, setForm] = useState({
     clientId: entry.clientId,
@@ -129,6 +133,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
       description: entry.description,
       extra: entry.extra ?? '',
     });
+    setDateBlocked(null);
   }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow calendar drag/resize: sync date & times from the live store entry.
@@ -196,8 +201,18 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
         {/* Date */}
         <div>
           <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Datum</label>
-          <input type="date" value={form.date} onChange={e => set('date', e.target.value)}
+          <input type="date" value={form.date}
+            onChange={e => {
+              const a = absences[e.target.value];
+              // Moving onto a full-day absence is not allowed
+              if (e.target.value !== form.date && blocksBooking(a)) { setDateBlocked(ABSENCE_TYPES[a.type].label); return; }
+              setDateBlocked(null);
+              set('date', e.target.value);
+            }}
             className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`} />
+          {dateBlocked && (
+            <p className="text-[10px] mt-1 text-red-400">An diesem Tag ist {dateBlocked} (ganzer Tag) eingetragen – keine Buchung möglich.</p>
+          )}
         </div>
 
         {/* Time range */}

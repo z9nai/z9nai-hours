@@ -4,6 +4,7 @@ import { useStore } from './store';
 import { TimeEntry } from './types';
 import Calendar from './components/Calendar';
 import EntryPanel from './components/EntryPanel';
+import { blocksBooking } from './absences';
 import ClientsView from './components/ClientsView';
 import CompanyView from './components/CompanyView';
 import ReportsView from './components/ReportsView';
@@ -19,13 +20,14 @@ function genId() {
 }
 
 export default function App() {
-  const { isDark, toggleTheme, dirHandle, savedHandleAvailable, pickDirectory, reconnectDirectory, clients, addEntry, ioError } = useStore();
+  const { isDark, toggleTheme, dirHandle, savedHandleAvailable, pickDirectory, reconnectDirectory, clients, addEntry, ioError, absences } = useStore();
   const [view, setView] = useState<View>('calendar');
   const [panelEntry, setPanelEntry] = useState<TimeEntry | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Drag selection (or "Neuer Eintrag") creates the entry immediately — auto-save
   const handleSelect = (sel: PanelEntry) => {
+    if (blocksBooking(absences[sel.date])) return; // full-day absence: no bookings
     const entry: TimeEntry = {
       id: genId(),
       clientId: sel.clientId ?? (clients[0]?.id ?? ''),
