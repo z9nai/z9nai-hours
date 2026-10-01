@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Client, Company, MonthData, TimeEntry } from './types';
+import { Absence, Client, Company, MonthData, TimeEntry } from './types';
 import { GitConfig, commitFiles, loadGitConfig, saveGitConfig } from './git';
 
 export interface GitStatus {
@@ -23,7 +23,7 @@ interface StoreCtx {
   entries: TimeEntry[];
   projects: Record<string, string[]>; // clientId → projects, most recently used first
   extras: Record<string, string[]>;   // clientId → extra-field values, most recently used first
-  vacations: string[];                // ISO dates marked as Ferien (sorted)
+  absences: Record<string, Absence>;  // ISO date → Ferien / Krank / Feiertag (full or half day)
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
@@ -36,7 +36,7 @@ interface StoreCtx {
   deleteEntry: (id: string) => void;
   touchProject: (clientId: string, project: string) => void;
   touchExtra: (clientId: string, value: string) => void;
-  toggleVacation: (date: string) => void;
+  setAbsence: (date: string, absence: Absence | null) => void;
   pickDirectory: () => Promise<void>;
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
@@ -50,7 +50,7 @@ interface StoreCtx {
 }
 
 const GIT_COMMIT_DELAY_MS = 10_000; // collect changes, then one commit
-const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|vacations)\.json$/;
+const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|absences)\.json$/;
 
 type YM = { year: number; month: number };
 
@@ -217,7 +217,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [projects, setProjects] = useState<Record<string, string[]>>({});
   const [extras, setExtras] = useState<Record<string, string[]>>({});
-  const [vacations, setVacations] = useState<string[]>([]);
+  const [absences, setAbsences] = useState<Record<string, Absence>>({});
   const [currentMonth, setCurrentMonth] = useState<YM>({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [ioError, setIoError] = useState<string | null>(null);
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
@@ -405,13 +405,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       readJson<Client[]>(dir, 'clients.json', []),
       readJson<Record<string, string[]>>(dir, 'projects.json', {}),
       readJson<Record<string, string[]>>(dir, 'extras.json', {}),
-      readJson<string[]>(dir, 'vacations.json', []),
+      readJson<Record<string, Absence> | null>(dir, 'absences.json', null),
     ]);
     setCompanyState(c);
     setClientsState(cl);
     setProjects(pr);
     setExtras(ex);
-    setVacations(Array.isArray(va) ? va : []);
+    if (va) {
+      setAbsences(va);
+    } else {
+      // Migrate the earlier vacations.json (list of full Ferien days)
+      const old = await readJson<string[]>(dir, 'vacations.json', []);
+      const migrated: Record<string, Absence> = {};
+      for (const d of Array.isArray(old) ? old : []) migrated[d] = { type: 'ferien' };
+      setAbsences(migrated);
+      if (Object.keys(migrated).length > 0) await writeData(dir, 'absences.json', migrated);
+    }
     await loadWanted(dir);
   }, [loadWanted]);
 
@@ -573,12 +582,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     touchMru(setExtras, 'extras.json', clientId, value);
   }, []);
 
-  const toggleVacation = useCallback((date: string) => {
-    setVacations(prev => {
-      const updated = prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date].sort();
+  const setAbsence = useCallback((date: string, absence: Absence | null) => {
+    setAbsences(prev => {
+      const { [date]: _, ...rest } = prev;
+      const merged: Record<string, Absence> = absence ? { ...rest, [date]: absence } : rest;
+      // Keep the file sorted by date
+      const updated = Object.fromEntries(Object.entries(merged).sort(([a], [b]) => a.localeCompare(b)));
       if (dirRef.current) {
-        writeData(dirRef.current, 'vacations.json', updated)
-          .catch(e => fail('Speichern von vacations.json fehlgeschlagen', e));
+        writeData(dirRef.current, 'absences.json', updated)
+          .catch(e => fail('Speichern von absences.json fehlgeschlagen', e));
       }
       return updated;
     });
@@ -623,8 +635,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, projects, extras, vacations, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
-      setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra, toggleVacation,
+      company, clients, entries, projects, extras, absences, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
+      setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra, setAbsence,
       pickDirectory, reconnectDirectory, toggleTheme, showMonths, readMonthEntries,
       gitConfig, setGitConfig, gitStatus, commitNow, commitAllData,
     }}>

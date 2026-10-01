@@ -68,3 +68,10 @@ export interface MonthData {
   month: number; // 1-12
   entries: TimeEntry[];
 }
+
+export type AbsenceType = 'ferien' | 'krank' | 'feiertag';
+
+export interface Absence {
+  type: AbsenceType;
+  half?: boolean; // half day
+}

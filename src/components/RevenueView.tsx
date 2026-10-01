@@ -1,8 +1,9 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useStore } from '../store';
-import { Client } from '../types';
+import { Absence, AbsenceType, Client } from '../types';
 import { clientColorClasses } from '../colors';
+import { ABSENCE_ORDER, ABSENCE_TYPES, absenceDays } from '../absences';
 
 const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -52,11 +53,11 @@ function rangeMonths(range: Range, cy: number, cm: number): YM[] {
   return out;
 }
 
-const NO_DAYS: ReadonlySet<string> = new Set();
+type Absences = Record<string, Absence>;
 
-// Mon–Fri in a month minus Ferien, optionally only up to (and including) a
-// given day and only inside an ISO date window (from/to, each optional)
-function workdays(y: number, m: number, off: ReadonlySet<string>, uptoDay?: number, from = '', to = ''): number {
+// Mon–Fri in a month minus absences (half days count 0.5), optionally only up
+// to (and including) a given day and only inside an ISO date window (from/to)
+function workdays(y: number, m: number, off: Absences, uptoDay?: number, from = '', to = ''): number {
   const last = new Date(y, m, 0).getDate();
   const end = Math.min(uptoDay ?? last, last);
   const ym = `${y}-${String(m).padStart(2, '0')}`;
@@ -65,17 +66,17 @@ function workdays(y: number, m: number, off: ReadonlySet<string>, uptoDay?: numb
     const wd = new Date(y, m - 1, d).getDay();
     if (wd === 0 || wd === 6) continue;
     const iso = `${ym}-${String(d).padStart(2, '0')}`;
-    if (off.has(iso) || (from && iso < from) || (to && iso > to)) continue;
-    n++;
+    if ((from && iso < from) || (to && iso > to)) continue;
+    n += 1 - absenceDays(off[iso]);
   }
   return n;
 }
 
 // A client's revenue target for one month: only during the mandate (the
 // Kontingent period, if set); partial months pro-rata by working days.
-// With uptoDay only the share up to that day ("Soll bis heute"). Ferien don't
+// With uptoDay only the share up to that day ("Soll bis heute"). Absences don't
 // lower a full month's target, they only shift how it spreads over the month.
-function clientTarget(c: Client, y: number, m: number, off: ReadonlySet<string>, uptoDay?: number): number {
+function clientTarget(c: Client, y: number, m: number, off: Absences, uptoDay?: number): number {
   const t = c.revenueTarget ?? 0;
   if (t <= 0) return 0;
   const total = workdays(y, m, off);
@@ -358,8 +359,7 @@ function CumulativeChart({ months, theme, accent }: { months: MonthInfo[]; theme
 }
 
 export default function RevenueView() {
-  const { clients, isDark, entries, readMonthEntries, vacations } = useStore();
-  const off = useMemo(() => new Set(vacations), [vacations]);
+  const { clients, isDark, entries, readMonthEntries, absences: off } = useStore();
   const [range, setRange] = useState<Range>('6');
   const [clientId, setClientId] = useState<string>('all');
 
@@ -402,10 +402,21 @@ export default function RevenueView() {
   const hasTargets = shown.some(c => (c.revenueTarget ?? 0) > 0);
   const targetOf = ({ y, m }: YM, uptoDay?: number) => shown.reduce((s, c) => s + clientTarget(c, y, m, off, uptoDay), 0);
 
-  // Pace through the running month, by working days without Ferien
+  // Pace through the running month, by working days without absences
   const wdTotal = workdays(cy, cm, off);
   const wdElapsed = workdays(cy, cm, off, today);
-  const vacDays = workdays(cy, cm, NO_DAYS) - wdTotal;
+  // Absent working days of the running month, per type (for the forecast tile)
+  const absentByType: Partial<Record<AbsenceType, number>> = {};
+  for (const [iso, a] of Object.entries(off)) {
+    const d = new Date(iso + 'T00:00:00');
+    if (d.getFullYear() !== cy || d.getMonth() + 1 !== cm || d.getDay() === 0 || d.getDay() === 6) continue;
+    absentByType[a.type] = (absentByType[a.type] ?? 0) + absenceDays(a);
+  }
+  const absentLabel = ABSENCE_ORDER
+    .filter(t => absentByType[t])
+    .map(t => `${ABSENCE_TYPES[t].label} ${absentByType[t]!.toLocaleString('de-CH')}`)
+    .join(', ');
+  const fmtDays = (n: number) => n.toLocaleString('de-CH', { maximumFractionDigits: 1 });
   const pace = wdTotal > 0 ? wdElapsed / wdTotal : 1;
 
   const monthInfos: MonthInfo[] = months.map((ym, i) => {
@@ -525,7 +536,7 @@ export default function RevenueView() {
           <div className={`text-xl font-semibold mt-1 ${strong}`}>{fmtChf(curForecast)}</div>
           <div className={`text-[11px] mt-0.5 ${muted}`}>
             {monthlyTarget > 0 ? <>{fmtPct(curForecast / monthlyTarget)} vom Ziel · </> : null}
-            {wdElapsed}/{wdTotal} Arbeitstage{vacDays > 0 && ` (ohne ${vacDays} Ferientag${vacDays > 1 ? 'e' : ''})`}
+            {fmtDays(wdElapsed)}/{fmtDays(wdTotal)} Arbeitstage{absentLabel && ` (ohne ${absentLabel})`}
           </div>
           {monthlyTarget > 0 && <Meter value={curForecast / monthlyTarget} />}
           {monthlyTarget > 0 && (

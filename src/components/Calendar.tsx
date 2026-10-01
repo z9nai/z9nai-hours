@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Copy, Check, TreePalm } from 'lucide-react';
-import { TimeEntry } from '../types';
+import { ChevronLeft, ChevronRight, Copy, Check, CalendarOff } from 'lucide-react';
+import { Absence, TimeEntry } from '../types';
 import { useStore } from '../store';
 import { clientColorClasses } from '../colors';
+import { ABSENCE_ORDER, ABSENCE_TYPES } from '../absences';
 
 const HOUR_START = 5;
 const HOUR_END = 23;
@@ -94,6 +95,56 @@ const DAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'S
 const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
+// ── Absence menu: Ferien / Krank / Feiertag, full or half day ──────────────
+function AbsenceMenu({ value, onChange, onClose, isDark }: {
+  value: Absence | undefined;
+  onChange: (a: Absence | null) => void;
+  onClose: () => void;
+  isDark: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (ev: MouseEvent) => {
+      if (ref.current && !ref.current.contains(ev.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+  const pick = (a: Absence | null) => { onChange(a); onClose(); };
+  const chip = (active: boolean) => `text-[10px] px-2 py-0.5 rounded border transition-colors ${
+    active
+      ? isDark ? 'bg-white/15 border-white/30 text-white' : 'bg-black/10 border-black/30 text-black'
+      : isDark ? 'border-white/10 text-white/50 hover:border-white/30 hover:text-white' : 'border-black/10 text-black/50 hover:border-black/30 hover:text-black'
+  }`;
+  return (
+    <div ref={ref}
+      className={`absolute top-full right-0 mt-1 z-50 w-48 rounded-lg border shadow-lg p-1.5 text-left ${
+        isDark ? 'bg-[#1a1b20] border-white/10' : 'bg-white border-black/10'
+      }`}>
+      {ABSENCE_ORDER.map(t => {
+        const cfg = ABSENCE_TYPES[t];
+        const Icon = cfg.icon;
+        return (
+          <div key={t} className="flex items-center gap-2 px-1.5 py-1">
+            <Icon size={12} className={isDark ? cfg.text : cfg.textLight} />
+            <span className={`flex-1 text-xs ${isDark ? 'text-white/80' : 'text-black/80'}`}>{cfg.label}</span>
+            <button className={chip(value?.type === t && !value.half)} onClick={() => pick({ type: t })}>Ganz</button>
+            <button className={chip(value?.type === t && !!value.half)} onClick={() => pick({ type: t, half: true })}>½</button>
+          </div>
+        );
+      })}
+      {value && (
+        <button onClick={() => pick(null)}
+          className={`w-full mt-1 pt-1.5 border-t text-xs text-left px-1.5 py-1 transition-colors ${
+            isDark ? 'border-white/10 text-white/50 hover:text-red-400' : 'border-black/10 text-black/50 hover:text-red-500'
+          }`}>
+          Entfernen
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Interaction state ───────────────────────────────────────────────────────
 type Interaction =
   | { kind: 'select'; dayIdx: number; startSlot: number; endSlot: number }
@@ -110,7 +161,9 @@ interface Props {
 }
 
 export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
-  const { entries, isDark, clients, addEntry, updateEntry, showMonths, vacations, toggleVacation } = useStore();
+  const { entries, isDark, clients, addEntry, updateEntry, showMonths, absences, setAbsence } = useStore();
+  const [absenceMenu, setAbsenceMenu] = useState<string | null>(null); // ISO date with open menu
+  const closeAbsenceMenu = useCallback(() => setAbsenceMenu(null), []);
   const [weekOffset, setWeekOffset] = useState(0);
   const days = getWeekDays(weekOffset);
 
@@ -399,24 +452,32 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
         {days.map((d, i) => {
           const iso = dateToISO(d);
           const isToday = iso === today;
-          const isVacation = vacations.includes(iso);
+          const absence = absences[iso];
+          const absCfg = absence && ABSENCE_TYPES[absence.type];
+          const AbsIcon = absCfg ? absCfg.icon : CalendarOff;
           const dayTotal = fmtMins(dayMins[i]);
           return (
             <div key={i} className={`group relative flex-1 text-center py-1.5 text-xs ${isToday ? (isDark ? 'text-blue-400' : 'text-blue-600') : textMuted}`}>
-              {/* Ferien: excluded from the revenue forecast */}
+              {/* Absence (Ferien / Krank / Feiertag): excluded from the revenue forecast */}
               <button
-                onClick={() => toggleVacation(iso)}
-                title={isVacation ? 'Ferien entfernen' : 'Als Ferien markieren'}
+                onMouseDown={e => e.stopPropagation()} // keep the menu's outside-click handler from re-opening it
+                onClick={() => setAbsenceMenu(m => (m === iso ? null : iso))}
+                title={absCfg ? `${absCfg.label}${absence!.half ? ' (halber Tag)' : ''} – ändern` : 'Abwesenheit markieren'}
                 className={`absolute top-1 right-1 p-0.5 rounded transition-opacity ${
-                  isVacation
-                    ? (isDark ? 'text-cyan-400' : 'text-cyan-600')
-                    : `opacity-0 group-hover:opacity-100 ${isDark ? 'text-white/30 hover:text-white/70' : 'text-black/30 hover:text-black/70'}`
+                  absCfg
+                    ? (isDark ? absCfg.text : absCfg.textLight)
+                    : `${absenceMenu === iso ? '' : 'opacity-0'} group-hover:opacity-100 ${isDark ? 'text-white/30 hover:text-white/70' : 'text-black/30 hover:text-black/70'}`
                 }`}
-              ><TreePalm size={12} /></button>
+              ><AbsIcon size={12} /></button>
+              {absenceMenu === iso && (
+                <AbsenceMenu value={absence} onChange={a => setAbsence(iso, a)} onClose={closeAbsenceMenu} isDark={isDark} />
+              )}
               <div className="font-semibold truncate px-1">{DAY_NAMES[i]}</div>
               <div className={`text-[11px] ${isToday ? 'font-bold' : ''}`}>{d.getDate()}</div>
-              {isVacation && (
-                <div className={`text-[10px] mt-0.5 ${isDark ? 'text-cyan-400/80' : 'text-cyan-700/80'}`}>Ferien</div>
+              {absCfg && (
+                <div className={`text-[10px] mt-0.5 opacity-80 ${isDark ? absCfg.text : absCfg.textLight}`}>
+                  {absCfg.label}{absence!.half ? ' ½' : ''}
+                </div>
               )}
               {dayTotal && (
                 <div className={`text-[10px] tabular-nums mt-0.5 ${isToday ? (isDark ? 'text-blue-400/70' : 'text-blue-600/70') : (isDark ? 'text-white/20' : 'text-black/20')}`}>
@@ -447,14 +508,17 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           {days.map((day, dayIdx) => {
             // Render entries whose LIVE position lands in this column
             const dayEntries = displayEntries.filter(e => livePos(e).dayIdx === dayIdx);
-            const isVacation = vacations.includes(dateToISO(day));
+            const absence = absences[dateToISO(day)];
 
             return (
               <div key={dayIdx} className={`flex-1 relative border-l ${border}`}>
-                {isVacation && (
+                {absence && (
                   <div className="absolute inset-0 pointer-events-none"
                     style={{
-                      backgroundImage: `repeating-linear-gradient(45deg, ${isDark ? 'rgba(34,211,238,0.06)' : 'rgba(8,145,178,0.07)'} 0 6px, transparent 6px 14px)`,
+                      opacity: absence.half ? 0.5 : 1,
+                      backgroundImage: `repeating-linear-gradient(45deg, ${
+                        isDark ? ABSENCE_TYPES[absence.type].stripe : ABSENCE_TYPES[absence.type].stripeLight
+                      } 0 6px, transparent 6px 14px)`,
                     }} />
                 )}
 
