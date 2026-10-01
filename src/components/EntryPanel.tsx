@@ -29,20 +29,31 @@ function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls
   const itemCls = isDark
     ? 'text-white/70 hover:bg-white/8 hover:text-white'
     : 'text-black/70 hover:bg-black/5 hover:text-black';
+  const topCls = isDark ? 'bg-white/8 text-white' : 'bg-black/5 text-black';
+  const pick = (s: string) => { onChange(s); onCommit(s); setOpen(false); };
   return (
     <div className="relative">
       <input type="text" placeholder={placeholder} value={value}
-        onChange={e => onChange(e.target.value)}
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onBlur={() => { setTimeout(() => setOpen(false), 150); onCommit(value); }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (open && filtered.length > 0) pick(filtered[0]);
+            else { onCommit(value); setOpen(false); }
+          } else if (e.key === 'Escape') {
+            setOpen(false);
+          }
+        }}
         className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`} />
       {open && filtered.length > 0 && (
         <div className={`absolute left-0 right-0 top-full mt-1 rounded border z-30 overflow-hidden ${dropCls}`}>
-          {filtered.map(s => (
+          {filtered.map((s, i) => (
             <button key={s} type="button"
               onMouseDown={e => e.preventDefault()}
-              onClick={() => { onChange(s); onCommit(s); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${itemCls}`}>
+              onClick={() => pick(s)}
+              className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${i === 0 ? topCls : itemCls}`}>
               {s}
             </button>
           ))}

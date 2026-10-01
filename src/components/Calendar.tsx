@@ -110,51 +110,24 @@ interface Props {
 }
 
 export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
-  const { entries, isDark, clients, addEntry, updateEntry, currentMonth, setMonth, readMonthEntries } = useStore();
+  const { entries, isDark, clients, addEntry, updateEntry, showMonths } = useStore();
   const [weekOffset, setWeekOffset] = useState(0);
   const days = getWeekDays(weekOffset);
 
-  // ── Load entries for the visible week ──────────────────────────────────────
-  // Secondary month entries (calEntries) = months in the week that are NOT currentMonth
-  const [calEntries, setCalEntries] = useState<TimeEntry[]>([]);
-
+  // Tell the store which months the visible week spans (one or two); it loads
+  // them and stores every entry in the file of its own month.
   useEffect(() => {
     const d = getWeekDays(weekOffset);
-    // Primary month = Wednesday's month (middle of week, most representative)
-    const wed = d[2];
-    const primY = wed.getFullYear();
-    const primM = wed.getMonth() + 1;
-
-    // Sync store's current month so writes go to the right file
-    if (primY !== currentMonth.year || primM !== currentMonth.month) {
-      setMonth(primY, primM);
-    }
-
-    // Load entries for any secondary month visible in the week
-    const primaryKey = `${primY}-${primM}`;
-    const secondaryMonths: { y: number; m: number }[] = [];
-    const seen = new Set<string>([primaryKey]);
+    const months = new Map<string, { year: number; month: number }>();
     for (const day of d) {
-      const k = `${day.getFullYear()}-${day.getMonth() + 1}`;
-      if (!seen.has(k)) {
-        seen.add(k);
-        secondaryMonths.push({ y: day.getFullYear(), m: day.getMonth() + 1 });
-      }
+      months.set(`${day.getFullYear()}-${day.getMonth() + 1}`, { year: day.getFullYear(), month: day.getMonth() + 1 });
     }
-    if (secondaryMonths.length > 0) {
-      Promise.all(secondaryMonths.map(({ y, m }) => readMonthEntries(y, m)))
-        .then(results => setCalEntries(results.flat()));
-    } else {
-      setCalEntries([]);
-    }
+    // Wednesday's month is the default month for the report view
+    showMonths([...months.values()], { year: d[2].getFullYear(), month: d[2].getMonth() + 1 });
   }, [weekOffset]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Merge: store.entries (primary month, always current) + calEntries (secondary months)
-  const primaryPrefix = `${currentMonth.year}-${String(currentMonth.month).padStart(2, '0')}`;
-  const displayEntries = useMemo(() => {
-    const secondary = calEntries.filter(e => !e.date.startsWith(primaryPrefix));
-    return [...secondary, ...entries];
-  }, [calEntries, entries, primaryPrefix]);
+  // The store holds all loaded months; entries outside the visible days are not rendered
+  const displayEntries = entries;
 
   // Interaction stored in both ref (for event callbacks) and state (for rendering)
   const iaRef = useRef<Interaction | null>(null);

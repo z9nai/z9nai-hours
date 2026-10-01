@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2 } from 'lucide-react';
+import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings } from 'lucide-react';
 import { useStore } from './store';
 import { TimeEntry } from './types';
 import Calendar from './components/Calendar';
@@ -7,8 +7,9 @@ import EntryPanel from './components/EntryPanel';
 import ClientsView from './components/ClientsView';
 import CompanyView from './components/CompanyView';
 import ReportsView from './components/ReportsView';
+import AdminView from './components/AdminView';
 
-type View = 'calendar' | 'clients' | 'reports' | 'company';
+type View = 'calendar' | 'clients' | 'reports' | 'company' | 'admin';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
@@ -17,7 +18,7 @@ function genId() {
 }
 
 export default function App() {
-  const { isDark, toggleTheme, dirHandle, savedHandleAvailable, pickDirectory, reconnectDirectory, clients, addEntry } = useStore();
+  const { isDark, toggleTheme, dirHandle, savedHandleAvailable, pickDirectory, reconnectDirectory, clients, addEntry, ioError } = useStore();
   const [view, setView] = useState<View>('calendar');
   const [panelEntry, setPanelEntry] = useState<TimeEntry | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -83,6 +84,8 @@ export default function App() {
         {navBtn('company', Building2, 'Firma')}
 
         <div className="ml-auto flex items-center gap-3">
+          {navBtn('admin', Settings, 'Admin')}
+
           {/* Data directory */}
           <button
             onClick={pickDirectory}
@@ -125,6 +128,12 @@ export default function App() {
         </div>
       )}
 
+      {ioError && (
+        <div className={`px-4 py-2 text-[11px] border-b ${isDark ? 'bg-red-950/40 text-red-300 border-red-500/30' : 'bg-red-50 text-red-700 border-red-200'}`}>
+          {ioError}
+        </div>
+      )}
+
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {view === 'calendar' ? (
@@ -143,6 +152,10 @@ export default function App() {
         ) : view === 'reports' ? (
           <div className="flex-1 overflow-y-auto">
             <ReportsView />
+          </div>
+        ) : view === 'admin' ? (
+          <div className="flex-1 overflow-y-auto">
+            <AdminView />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">

@@ -1,5 +1,15 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Client, Company, MonthData, TimeEntry } from './types';
+import { GitConfig, commitFiles, loadGitConfig, saveGitConfig } from './git';
+
+export interface GitStatus {
+  busy: boolean;
+  pending: string[];        // files waiting to be committed
+  lastCommitAt?: string;
+  lastSha?: string;
+  lastMessage?: string;
+  error?: string;
+}
 
 const DEFAULT_COMPANY: Company = {
   name: '', uid: '', iban: '',
@@ -16,7 +26,8 @@ interface StoreCtx {
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
-  currentMonth: { year: number; month: number };
+  currentMonth: YM;
+  ioError: string | null;
   setCompany: (c: Company) => void;
   setClients: (c: Client[]) => void;
   addEntry: (e: TimeEntry) => void;
@@ -27,16 +38,80 @@ interface StoreCtx {
   pickDirectory: () => Promise<void>;
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
-  setMonth: (year: number, month: number) => void;
+  showMonths: (months: YM[], primary: YM) => void;
   readMonthEntries: (year: number, month: number) => Promise<TimeEntry[]>;
+  gitConfig: GitConfig;
+  setGitConfig: (c: GitConfig) => void;
+  gitStatus: GitStatus;
+  commitNow: () => Promise<void>;
+  commitAllData: () => Promise<void>;
 }
 
+const GIT_COMMIT_DELAY_MS = 10_000; // collect changes, then one commit
+const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras)\.json$/;
+
+type YM = { year: number; month: number };
+
 const MAX_PROJECTS = 30;
+const MAX_BACKUPS_PER_MONTH = 30;
+const BACKUP_INTERVAL_MS = 60 * 60 * 1000; // at most one backup per month file and hour
 
 const Ctx = createContext<StoreCtx>(null!);
 export const useStore = () => useContext(Ctx);
 
 const monthKey = (y: number, m: number) => `hours-${y}-${String(m).padStart(2, '0')}.json`;
+const ymKey = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
+const ymKeyOfDate = (iso: string) => iso.slice(0, 7);
+const parseYm = (k: string): YM => ({ year: Number(k.slice(0, 4)), month: Number(k.slice(5, 7)) });
+
+const isNotFound = (e: unknown) => (e as { name?: string } | null)?.name === 'NotFoundError';
+
+// Strict month reader: a missing file is an empty month, but any other problem
+// (unreadable, corrupt JSON) throws — the caller must then NOT treat the month
+// as empty, or a later save would wipe the file.
+async function readMonthStrict(dir: FileSystemDirectoryHandle, y: number, m: number): Promise<TimeEntry[]> {
+  let fh: FileSystemFileHandle;
+  try {
+    fh = await dir.getFileHandle(monthKey(y, m));
+  } catch (e) {
+    if (isNotFound(e)) return [];
+    throw e;
+  }
+  const text = await (await fh.getFile()).text();
+  if (!text.trim()) return [];
+  const md = JSON.parse(text) as MonthData;
+  if (!Array.isArray(md.entries)) throw new Error('Datei hat kein gültiges "entries"-Feld');
+  return md.entries;
+}
+
+// Copy the current on-disk month file to backup/hours-YYYY-MM.<timestamp>.json
+// and keep only the newest MAX_BACKUPS_PER_MONTH copies per month.
+async function backupMonthFile(dir: FileSystemDirectoryHandle, k: string) {
+  const { year, month } = parseYm(k);
+  const name = monthKey(year, month);
+  let text: string;
+  try {
+    text = await (await (await dir.getFileHandle(name)).getFile()).text();
+  } catch (e) {
+    if (isNotFound(e)) return; // nothing to back up yet
+    throw e;
+  }
+  if (!text.trim()) return;
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+  const prefix = name.replace(/\.json$/, '.');
+  const backupDir = await dir.getDirectoryHandle('backup', { create: true });
+  const w = await (await backupDir.getFileHandle(`${prefix}${stamp}.json`, { create: true })).createWritable();
+  await w.write(text);
+  await w.close();
+  const existing: string[] = [];
+  for await (const n of backupDir.keys()) if (n.startsWith(prefix)) existing.push(n);
+  existing.sort(); // timestamps sort chronologically
+  for (const old of existing.slice(0, Math.max(0, existing.length - MAX_BACKUPS_PER_MONTH))) {
+    await backupDir.removeEntry(old);
+  }
+}
 
 // ── IndexedDB: persist FileSystemDirectoryHandle across sessions ───────────
 function openDB(): Promise<IDBDatabase> {
@@ -140,28 +215,209 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [projects, setProjects] = useState<Record<string, string[]>>({});
   const [extras, setExtras] = useState<Record<string, string[]>>({});
-  const [currentMonth, setCurrentMonth] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
+  const [currentMonth, setCurrentMonth] = useState<YM>({ year: now.getFullYear(), month: now.getMonth() + 1 });
+  const [ioError, setIoError] = useState<string | null>(null);
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
 
-  const loadAll = useCallback(async (dir: FileSystemDirectoryHandle, year: number, month: number) => {
-    const [c, cl, md, pr, ex] = await Promise.all([
+  // ── Git: every data-file write is queued and committed after a short idle ──
+  const [gitConfig, setGitConfigState] = useState<GitConfig>(loadGitConfig);
+  const gitConfigRef = useRef(gitConfig);
+  const [gitStatus, setGitStatus] = useState<GitStatus>({ busy: false, pending: [] });
+  const gitPendingRef = useRef<Map<string, string>>(new Map()); // file → content
+  const gitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gitBusyRef = useRef<Promise<void>>(Promise.resolve());
+
+  const setGitConfig = useCallback((c: GitConfig) => {
+    gitConfigRef.current = c;
+    saveGitConfig(c);
+    setGitConfigState(c);
+  }, []);
+
+  // `manual`: triggered by a button, so it runs even while auto-commit is off
+  const runCommit = useCallback((files: Map<string, string>, message: string, manual = false) => {
+    gitBusyRef.current = gitBusyRef.current.then(async () => {
+      const cfg = gitConfigRef.current;
+      if ((!cfg.enabled && !manual) || files.size === 0) return;
+      if (!cfg.token) {
+        setGitStatus(s => ({ ...s, error: 'Kein Token hinterlegt' }));
+        return;
+      }
+      setGitStatus(s => ({ ...s, busy: true }));
+      try {
+        const sha = await commitFiles(cfg, Object.fromEntries(files), message);
+        setGitStatus(s => ({
+          ...s, busy: false, error: undefined,
+          pending: [...gitPendingRef.current.keys()],
+          ...(sha ? { lastSha: sha, lastCommitAt: new Date().toLocaleString('de-CH'), lastMessage: message } : {}),
+        }));
+      } catch (e) {
+        // Put the files back unless a newer version is already queued
+        for (const [name, content] of files) if (!gitPendingRef.current.has(name)) gitPendingRef.current.set(name, content);
+        setGitStatus(s => ({
+          ...s, busy: false, pending: [...gitPendingRef.current.keys()],
+          error: e instanceof Error ? e.message : String(e),
+        }));
+      }
+    });
+    return gitBusyRef.current;
+  }, []);
+
+  const commitNow = useCallback(async () => {
+    if (gitTimerRef.current) { clearTimeout(gitTimerRef.current); gitTimerRef.current = null; }
+    const files = new Map(gitPendingRef.current);
+    gitPendingRef.current.clear();
+    if (files.size === 0) return;
+    await runCommit(files, `Daten aktualisiert: ${[...files.keys()].sort().join(', ')}`);
+  }, [runCommit]);
+
+  const queueGit = (name: string, content: string) => {
+    if (!gitConfigRef.current.enabled) return;
+    gitPendingRef.current.set(name, content);
+    setGitStatus(s => ({ ...s, pending: [...gitPendingRef.current.keys()] }));
+    if (gitTimerRef.current) clearTimeout(gitTimerRef.current);
+    gitTimerRef.current = setTimeout(commitNow, GIT_COMMIT_DELAY_MS);
+  };
+
+  // Write a data file to disk, then queue exactly that content for git
+  const writeData = async (dir: FileSystemDirectoryHandle, name: string, data: unknown) => {
+    await writeJson(dir, name, data);
+    queueGit(name, JSON.stringify(data, null, 2));
+  };
+
+  // Commit right away when the tab goes to the background
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') commitNow(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
+  }, [commitNow]);
+
+  // ── Month files ──────────────────────────────────────────────────────────
+  // Every month that was successfully read from disk lives here with its FULL
+  // content. Only months in this map are ever written, and each entry is stored
+  // in the month of its own date — so one month's list can never overwrite
+  // another month's file.
+  const loadedRef = useRef<Map<string, TimeEntry[]>>(new Map());
+  const wantedRef = useRef<YM[]>([currentMonth]); // months the calendar shows
+  const dirtyRef = useRef<Set<string>>(new Set());
+  const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBackupRef = useRef<Map<string, number>>(new Map());
+
+  // All month-file IO runs strictly in order (reads never overtake writes)
+  const ioQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueue = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const p = ioQueueRef.current.then(fn, fn);
+    ioQueueRef.current = p.catch(() => {});
+    return p;
+  };
+
+  const publish = () => setEntries([...loadedRef.current.values()].flat());
+
+  const fail = (msg: string, e: unknown) => {
+    console.error(`[hours] ${msg}`, e);
+    setIoError(`${msg} — ${e instanceof Error ? e.message : String(e)}`);
+  };
+
+  const backupIfDue = async (dir: FileSystemDirectoryHandle, k: string) => {
+    const last = lastBackupRef.current.get(k) ?? 0;
+    if (Date.now() - last < BACKUP_INTERVAL_MS) return;
+    await backupMonthFile(dir, k);
+    lastBackupRef.current.set(k, Date.now());
+  };
+
+  const flushWrites = useCallback((): Promise<void> => {
+    if (writeTimerRef.current) { clearTimeout(writeTimerRef.current); writeTimerRef.current = null; }
+    const dir = dirRef.current;
+    const keys = [...dirtyRef.current];
+    dirtyRef.current.clear();
+    if (!dir || keys.length === 0) return Promise.resolve();
+    return enqueue(async () => {
+      for (const k of keys) {
+        const list = loadedRef.current.get(k);
+        if (!list) continue; // never write a month that was not read from disk
+        const { year, month } = parseYm(k);
+        try {
+          await backupIfDue(dir, k);
+          await writeData(dir, monthKey(year, month), { year, month, entries: list });
+        } catch (e) {
+          dirtyRef.current.add(k); // retry with the next write
+          fail(`Speichern von ${monthKey(year, month)} fehlgeschlagen`, e);
+        }
+      }
+    });
+  }, []);
+
+  const markDirty = (k: string) => {
+    dirtyRef.current.add(k);
+    if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
+    writeTimerRef.current = setTimeout(flushWrites, 400);
+  };
+
+  // Read a month into memory (no-op if already loaded). A failed read leaves the
+  // month unloaded, so it can never be overwritten with an empty list.
+  const loadMonth = async (dir: FileSystemDirectoryHandle, k: string): Promise<boolean> => {
+    if (loadedRef.current.has(k)) return true;
+    const { year, month } = parseYm(k);
+    try {
+      loadedRef.current.set(k, await readMonthStrict(dir, year, month));
+      return true;
+    } catch (e) {
+      fail(`Lesen von ${monthKey(year, month)} fehlgeschlagen`, e);
+      return false;
+    }
+  };
+
+  const loadWanted = useCallback((dir: FileSystemDirectoryHandle) =>
+    enqueue(async () => {
+      for (const { year, month } of wantedRef.current) await loadMonth(dir, ymKey(year, month));
+      publish();
+    }), []);
+
+  // Apply a change to one month; loads the month first if needed.
+  const mutateMonth = (k: string, fn: (list: TimeEntry[]) => TimeEntry[]) => {
+    const list = loadedRef.current.get(k);
+    if (list) {
+      loadedRef.current.set(k, fn(list));
+      markDirty(k);
+      publish();
+      return;
+    }
+    const dir = dirRef.current;
+    if (!dir) return;
+    enqueue(async () => {
+      if (!(await loadMonth(dir, k))) return;
+      loadedRef.current.set(k, fn(loadedRef.current.get(k)!));
+      markDirty(k);
+      publish();
+    });
+  };
+
+  const findLoaded = (id: string): string | null => {
+    for (const [k, list] of loadedRef.current) if (list.some(x => x.id === id)) return k;
+    return null;
+  };
+
+  const loadAll = useCallback(async (dir: FileSystemDirectoryHandle) => {
+    const [c, cl, pr, ex] = await Promise.all([
       readJson<Company>(dir, 'company.json', DEFAULT_COMPANY),
       readJson<Client[]>(dir, 'clients.json', []),
-      readJson<MonthData>(dir, monthKey(year, month), { year, month, entries: [] }),
       readJson<Record<string, string[]>>(dir, 'projects.json', {}),
       readJson<Record<string, string[]>>(dir, 'extras.json', {}),
     ]);
     setCompanyState(c);
     setClientsState(cl);
-    setEntries(md.entries);
     setProjects(pr);
     setExtras(ex);
-  }, []);
+    await loadWanted(dir);
+  }, [loadWanted]);
 
-  const activateDir = useCallback(async (dir: FileSystemDirectoryHandle, year: number, month: number) => {
+  const activateDir = useCallback(async (dir: FileSystemDirectoryHandle) => {
+    await flushWrites();
     dirRef.current = dir;
+    loadedRef.current = new Map();
+    dirtyRef.current.clear();
+    setIoError(null);
     setDirHandle(dir);
-    await loadAll(dir, year, month);
+    await loadAll(dir);
     const initIfMissing = async (name: string, data: unknown) => {
       try {
         await dir.getFileHandle(name);
@@ -180,7 +436,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       if (e instanceof Error && e.name === 'NotFoundError') {
         const built = await buildProjectsFromHistory(dir);
-        await writeJson(dir, 'projects.json', built);
+        await writeData(dir, 'projects.json', built);
         setProjects(built);
       }
     }
@@ -200,7 +456,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (!handle) return;
         const perm = await handle.queryPermission({ mode: 'readwrite' });
         if (perm === 'granted') {
-          await activateDir(handle, now.getFullYear(), now.getMonth() + 1);
+          await activateDir(handle);
         } else {
           // Permission needs re-approval — show reconnect button
           savedHandleRef.current = handle;
@@ -221,85 +477,70 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (perm === 'granted') {
         setSavedHandleAvailable(false);
         savedHandleRef.current = null;
-        await activateDir(handle, currentMonth.year, currentMonth.month);
+        await activateDir(handle);
       }
     } catch (e) {
       console.error('[hours] reconnectDirectory:', e);
     }
-  }, [currentMonth, activateDir]);
+  }, [activateDir]);
 
   const pickDirectory = useCallback(async () => {
     try {
       const dir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
       await persistHandle(dir);
-      await activateDir(dir, currentMonth.year, currentMonth.month);
+      await activateDir(dir);
     } catch (e: unknown) {
       if (e instanceof Error && e.name !== 'AbortError') console.error('[hours] pickDirectory:', e);
     }
-  }, [currentMonth, activateDir]);
+  }, [activateDir]);
 
-  // Debounced disk write: rapid successive changes (e.g. typing in the panel)
-  // collapse into one write. A pending write for a DIFFERENT month is flushed
-  // immediately so it can never be lost on month switch.
-  const pendingWriteRef = useRef<{ key: string; md: MonthData } | null>(null);
-  const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const flushPendingWrite = useCallback(() => {
-    const p = pendingWriteRef.current;
-    pendingWriteRef.current = null;
-    if (writeTimerRef.current) { clearTimeout(writeTimerRef.current); writeTimerRef.current = null; }
-    if (p && dirRef.current) writeJson(dirRef.current, p.key, p.md);
-  }, []);
-
-  const setMonth = useCallback(async (year: number, month: number) => {
-    flushPendingWrite();
-    setCurrentMonth({ year, month });
-    if (dirRef.current) {
-      const md = await readJson<MonthData>(dirRef.current, monthKey(year, month), { year, month, entries: [] });
-      setEntries(md.entries);
-    }
-  }, [flushPendingWrite]);
-
-  const saveMonthEntries = useCallback((updated: TimeEntry[]) => {
-    if (!dirRef.current) return;
-    const key = monthKey(currentMonth.year, currentMonth.month);
-    if (pendingWriteRef.current && pendingWriteRef.current.key !== key) flushPendingWrite();
-    pendingWriteRef.current = { key, md: { year: currentMonth.year, month: currentMonth.month, entries: updated } };
-    if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
-    writeTimerRef.current = setTimeout(flushPendingWrite, 400);
-  }, [currentMonth, flushPendingWrite]);
+  // Calendar tells the store which months the visible week spans
+  const showMonths = useCallback((months: YM[], primary: YM) => {
+    wantedRef.current = months;
+    setCurrentMonth(primary);
+    if (dirRef.current) loadWanted(dirRef.current);
+  }, [loadWanted]);
 
   // Flush on tab close so no debounced change is lost
   useEffect(() => {
-    window.addEventListener('beforeunload', flushPendingWrite);
-    return () => window.removeEventListener('beforeunload', flushPendingWrite);
-  }, [flushPendingWrite]);
+    const onUnload = () => { flushWrites(); };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, [flushWrites]);
 
   const setCompany = useCallback(async (c: Company) => {
     setCompanyState(c);
-    if (dirRef.current) await writeJson(dirRef.current, 'company.json', c);
+    if (dirRef.current) await writeData(dirRef.current, 'company.json', c);
   }, []);
 
   const setClients = useCallback(async (c: Client[]) => {
     setClientsState(c);
     if (dirRef.current) {
-      await writeJson(dirRef.current, 'clients.json', c);
+      await writeData(dirRef.current, 'clients.json', c);
     } else {
       console.warn('[hours] setClients: kein Verzeichnis gewählt, wird nicht gespeichert');
     }
   }, []);
 
-  const addEntry = useCallback((e: TimeEntry) => {
-    setEntries(prev => { const u = [...prev, e]; saveMonthEntries(u); return u; });
-  }, [saveMonthEntries]);
+  const upsert = (list: TimeEntry[], e: TimeEntry) =>
+    list.some(x => x.id === e.id) ? list.map(x => x.id === e.id ? e : x) : [...list, e];
 
+  const addEntry = useCallback((e: TimeEntry) => {
+    mutateMonth(ymKeyOfDate(e.date), list => upsert(list, e));
+  }, []);
+
+  // Moving an entry into another month removes it from the old month's file
   const updateEntry = useCallback((e: TimeEntry) => {
-    setEntries(prev => { const u = prev.map(x => x.id === e.id ? e : x); saveMonthEntries(u); return u; });
-  }, [saveMonthEntries]);
+    const newK = ymKeyOfDate(e.date);
+    const oldK = findLoaded(e.id);
+    if (oldK && oldK !== newK) mutateMonth(oldK, list => list.filter(x => x.id !== e.id));
+    mutateMonth(newK, list => upsert(list, e));
+  }, []);
 
   const deleteEntry = useCallback((id: string) => {
-    setEntries(prev => { const u = prev.filter(x => x.id !== id); saveMonthEntries(u); return u; });
-  }, [saveMonthEntries]);
+    const k = findLoaded(id);
+    if (k) mutateMonth(k, list => list.filter(x => x.id !== id));
+  }, []);
 
   // Record a value as "just used": move to front of the client's MRU list, cap at MAX_PROJECTS
   const touchMru = (
@@ -314,7 +555,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const list = prev[clientId] ?? [];
       if (list[0] === p) return prev; // already on top
       const updated = { ...prev, [clientId]: [p, ...list.filter(x => x !== p)].slice(0, MAX_PROJECTS) };
-      if (dirRef.current) writeJson(dirRef.current, fileName, updated);
+      if (dirRef.current) writeData(dirRef.current, fileName, updated);
       return updated;
     });
   };
@@ -327,12 +568,36 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     touchMru(setExtras, 'extras.json', clientId, value);
   }, []);
 
+  // For reports: in-memory content if the month is loaded (includes unsaved
+  // changes), otherwise read from disk — in queue order after pending writes.
   const readMonthEntries = useCallback(async (year: number, month: number): Promise<TimeEntry[]> => {
-    if (!dirRef.current) return [];
-    flushPendingWrite();
-    const md = await readJson<MonthData>(dirRef.current, monthKey(year, month), { year, month, entries: [] });
-    return md.entries;
-  }, [flushPendingWrite]);
+    const loaded = loadedRef.current.get(ymKey(year, month));
+    if (loaded) return loaded;
+    const dir = dirRef.current;
+    if (!dir) return [];
+    await flushWrites();
+    return enqueue(async () => {
+      try { return await readMonthStrict(dir, year, month); }
+      catch (e) { fail(`Lesen von ${monthKey(year, month)} fehlgeschlagen`, e); return []; }
+    });
+  }, [flushWrites]);
+
+  // Commit every data file as it is on disk (initial upload / full re-sync)
+  const commitAllData = useCallback(async () => {
+    const dir = dirRef.current;
+    if (!dir) { setGitStatus(s => ({ ...s, error: 'Kein Datenverzeichnis gewählt' })); return; }
+    await flushWrites();
+    const files = await enqueue(async () => {
+      const out = new Map<string, string>();
+      for await (const name of dir.keys()) {
+        if (!DATA_FILE.test(name)) continue;
+        out.set(name, await (await (await dir.getFileHandle(name)).getFile()).text());
+      }
+      return out;
+    });
+    for (const name of files.keys()) gitPendingRef.current.delete(name);
+    await runCommit(files, `Vollständiger Abgleich (${files.size} Dateien)`, true);
+  }, [flushWrites, runCommit]);
 
   const toggleTheme = () => setIsDark(d => !d);
 
@@ -342,9 +607,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, projects, extras, dirHandle, savedHandleAvailable, isDark, currentMonth,
+      company, clients, entries, projects, extras, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
       setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra,
-      pickDirectory, reconnectDirectory, toggleTheme, setMonth, readMonthEntries,
+      pickDirectory, reconnectDirectory, toggleTheme, showMonths, readMonthEntries,
+      gitConfig, setGitConfig, gitStatus, commitNow, commitAllData,
     }}>
       {children}
     </Ctx.Provider>
