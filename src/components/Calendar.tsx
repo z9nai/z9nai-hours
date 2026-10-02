@@ -697,6 +697,19 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                             {slotToTime(pos.startSlot)}–{slotToTime(pos.endSlot)}
                           </div>
                         )}
+                        {/* Extra field + description, when there is room (body clips overflow) */}
+                        {height >= SLOT_HEIGHT * 3 && (entry.extra || entry.description) && (
+                          <div className="mt-1 space-y-0.5 text-white/85 leading-snug">
+                            {entry.extra && (
+                              <div className="truncate">
+                                <span className="text-white/60">{client?.extraField?.label || 'Zusatz'}:</span> {entry.extra}
+                              </div>
+                            )}
+                            {entry.description && (
+                              <div className="whitespace-pre-line break-words">{entry.description}</div>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* ▼ Bottom resize handle */}
