@@ -49,6 +49,7 @@ export interface Client {
   cc?: CcRecipient[]; // additional invoice recipients (CC)
   quota?: Quota; // hour budget (Kostendach / Kontingent)
   extraField?: ExtraFieldConfig; // optional additional entry field (configurable label)
+  descriptionRequired?: boolean; // entries must have a description
   revenueTarget?: number; // monthly revenue target in CHF
 }
 

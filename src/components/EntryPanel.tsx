@@ -183,6 +183,8 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
     ? 'bg-white/5 border-white/10 text-white placeholder-white/20 focus:border-white/30'
     : 'bg-black/5 border-black/10 text-black placeholder-black/20 focus:border-black/30';
   const labelCls = isDark ? 'text-white/40' : 'text-black/40';
+  const descRequired = !!clients.find(c => c.id === form.clientId)?.descriptionRequired;
+  const descMissing  = descRequired && !form.description.trim();
 
   return (
     <div className={`flex flex-col h-full border-l ${bg}`}>
@@ -290,10 +292,12 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
 
         {/* Description */}
         <div>
-          <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Beschreibung</label>
+          <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>
+            Beschreibung {descRequired && <span className={descMissing ? 'text-red-400' : ''}>*</span>}
+          </label>
           <textarea rows={4} placeholder="Tätigkeitsbeschreibung…" value={form.description}
             onChange={e => set('description', e.target.value)}
-            className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors resize-none ${inputCls}`} />
+            className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors resize-none ${inputCls} ${descMissing ? '!border-red-400/60' : ''}`} />
         </div>
       </div>
 

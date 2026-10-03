@@ -624,13 +624,14 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                   const isSelected = entry.id === selectedId;
                   const active     = isEntryActive(entry.id);
                   const justCopied = copiedId === entry.id;
+                  const descMissing = !!client?.descriptionRequired && !entry.description.trim();
 
                   return (
                     <div
                       key={entry.id}
                       className={`absolute left-0.5 right-0.5 rounded border text-[10px] overflow-hidden
                         ${color}
-                        ${isSelected ? 'ring-1 ring-white/60' : ''}
+                        ${isSelected ? 'ring-1 ring-white/60' : descMissing ? 'ring-2 ring-red-500' : ''}
                         ${active ? 'opacity-95 shadow-lg z-10' : 'opacity-80 hover:opacity-100'}`}
                       style={{ top, height }}
                     >

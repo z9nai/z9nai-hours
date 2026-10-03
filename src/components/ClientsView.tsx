@@ -139,6 +139,13 @@ function ClientForm({ initial, onSave, onCancel, isDark }: {
           onChange={v => setF(p => ({ ...p, extraField: { enabled: p.extraField?.enabled ?? false, label: v } }))}
           placeholder="z.B. Ticket-Nr." isDark={isDark} />
       </div>
+      <label className={`flex items-center gap-2 text-xs cursor-pointer ${isDark ? 'text-white/70' : 'text-black/70'}`}>
+        <input type="checkbox"
+          checked={f.descriptionRequired ?? false}
+          onChange={e => setF(p => ({ ...p, descriptionRequired: e.target.checked || undefined }))}
+          className="accent-blue-500" />
+        Beschreibung ist Pflichtfeld
+      </label>
 
       <div className={`text-[10px] uppercase tracking-wider pt-1 ${labelCls}`}>Ansprechperson</div>
       <div className="grid grid-cols-3 gap-3">
