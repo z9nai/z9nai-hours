@@ -1,11 +1,16 @@
 import { Client, Company, Expense, ExpenseData } from './types';
 import { DEFAULT_KM_RATE, expenseAmount, fmtChf, monthSum, ymOf } from './expenses';
 import { Cell, Sheet, buildXlsx } from './xlsx';
+import { payoutQr } from './swissqr';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
 export const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+
+// Payment message shown in the e-banking ("Zusätzliche Informationen")
+export const payoutMessage = (company: Company, ym: string) =>
+  `Spesen ${monthLabel(ym)}${company.name ? ` ${company.name}` : ''}`;
 
 const isoToDate = (iso: string) => new Date(iso + 'T00:00:00');
 const fmtDate = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
@@ -176,6 +181,9 @@ export function printMonth(data: ExpenseData, company: Company, clients: Client[
   .summary { margin-top: 20pt; width: 55%; margin-left: auto; }
   .summary td { border-bottom: 0.5pt solid #ddd; }
   .summary tr.total td { border-top: 1.5pt solid #111; border-bottom: none; font-weight: 700; font-size: 10.5pt; }
+  .qr { display: flex; gap: 18pt; margin-top: 24pt; padding-top: 14pt; border-top: 0.75pt dashed #999; page-break-inside: avoid; font-size: 9pt; }
+  .qr h2 { margin-top: 0; }
+  .qr .lbl { font-size: 7.5pt; font-weight: 600; color: #555; margin-top: 6pt; }
   footer { margin-top: 28pt; font-size: 8pt; color: #888; }
 </style></head><body>
 <header>
@@ -206,6 +214,20 @@ ${list.length === 0 ? '<p class="muted">Keine Einzelspesen in diesem Monat.</p>'
   <tr><td>Pauschalspesen</td><td class="r">${money(s.allowance)}</td></tr>
   <tr class="total"><td>Total Auszahlung CHF</td><td class="r">${money(s.total)}</td></tr>
 </table>
+${(() => {
+  const qr = payoutQr(company, s.total, payoutMessage(company, ym));
+  if (!qr.ok || paidAt) return '';
+  return `<section class="qr">
+    <div>${qr.svg.replace(/width="\d+" height="\d+"/, 'width="130pt" height="130pt"')}</div>
+    <div>
+      <h2>Zahlung (QR-Code für das E-Banking)</h2>
+      <div class="lbl">Konto / Zahlbar an</div>
+      <div>${h(qr.iban)}<br>${h(qr.creditor.name)}<br>${h(qr.creditor.street)}<br>${h(qr.creditor.zip)} ${h(qr.creditor.city)}</div>
+      <div class="lbl">Betrag</div><div><b>CHF ${money(s.total)}</b></div>
+      <div class="lbl">Zusätzliche Informationen</div><div>${h(payoutMessage(company, ym))}</div>
+    </div>
+  </section>`;
+})()}
 <footer>Erstellt am ${new Date().toLocaleDateString('de-CH')} mit Z9nAI Hours</footer>
 </body></html>`;
 

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
-import { Company } from '../types';
+import { Company, Payee } from '../types';
 import { useStore } from '../store';
 import { DEFAULT_KM_RATE } from '../expenses';
+import { fmtIban, ibanValid, isQrIban, normIban } from '../swissqr';
 
 function Field({ label, value, onChange, placeholder, isDark }: {
   label: string;
@@ -39,6 +40,12 @@ export default function CompanyView() {
     setAllowanceStr(company.expenseAllowance != null ? String(company.expenseAllowance) : '');
   }, [company]);
 
+  const payee: Payee = f.payee ?? { name: '', iban: '', street: '', zip: '', city: '' };
+  const setPayee = (k: keyof Payee, v: string) => setF(prev => ({ ...prev, payee: { ...payee, [k]: v } }));
+  const ibanIssue = !payee.iban.trim() ? null
+    : !ibanValid(payee.iban) ? 'IBAN ungültig'
+    : isQrIban(payee.iban) ? 'QR-IBAN nicht möglich – normale IBAN verwenden' : null;
+
   const setAddr = (k: keyof Company['address'], v: string) =>
     setF(prev => ({ ...prev, address: { ...prev.address, [k]: v } }));
 
@@ -53,6 +60,9 @@ export default function CompanyView() {
       hoursPerDay: num(hoursStr),
       kmRate: num(kmRateStr),
       expenseAllowance: num(allowanceStr),
+      payee: payee.name.trim() || payee.iban.trim()
+        ? { ...payee, name: payee.name.trim(), iban: payee.iban.trim() ? fmtIban(normIban(payee.iban)) : '' }
+        : undefined,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -118,6 +128,23 @@ export default function CompanyView() {
         <p className={`text-[11px] -mt-2 ${isDark ? 'text-white/35' : 'text-black/35'}`}>
           Der Kilometersatz wird bei jeder neuen Autofahrt übernommen; bestehende Fahrten behalten ihren Satz.
           Ausbezahlte Monate behalten die Pauschale, mit der sie abgeschlossen wurden.
+        </p>
+
+        <div className={`text-[10px] uppercase tracking-wider pt-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>Spesen-Auszahlung an (QR-Code)</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Name Kontoinhaber" value={payee.name} onChange={v => setPayee('name', v)} placeholder="Vorname Nachname" isDark={isDark} />
+          <div>
+            <Field label="IBAN Privatkonto" value={payee.iban} onChange={v => setPayee('iban', v)} placeholder="CH00 0000 0000 0000 0000 0" isDark={isDark} />
+            {ibanIssue && <div className="text-[11px] text-red-400 mt-1">{ibanIssue}</div>}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Strasse" value={payee.street} onChange={v => setPayee('street', v)} placeholder={f.address.street || 'wie Firma'} isDark={isDark} />
+          <Field label="PLZ" value={payee.zip} onChange={v => setPayee('zip', v)} placeholder={f.address.zip || 'wie Firma'} isDark={isDark} />
+          <Field label="Ort" value={payee.city} onChange={v => setPayee('city', v)} placeholder={f.address.city || 'wie Firma'} isDark={isDark} />
+        </div>
+        <p className={`text-[11px] -mt-2 ${isDark ? 'text-white/35' : 'text-black/35'}`}>
+          Daraus entsteht pro Monat ein Swiss-QR-Code, den du im E-Banking der Firma scannst. Leere Adressfelder übernehmen die Firmenadresse.
         </p>
 
         <div className="pt-2">

@@ -22,6 +22,15 @@ export interface Company {
   kmRate?: number;            // CHF per km for car trips (Spesen)
   expenseAllowance?: number;  // monthly lump-sum expense allowance (Pauschalspesen) in CHF
   expenseAllowanceFrom?: string; // "YYYY-MM" the allowance applies from
+  payee?: Payee;              // private account expenses are paid out to (Swiss QR code)
+}
+
+export interface Payee {
+  name: string;
+  iban: string;
+  street: string; // empty → company address
+  zip: string;
+  city: string;
 }
 
 export interface ContactPerson {
