@@ -1,8 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Absence, Client, Company, ExpenseData, MonthData, TimeEntry } from './types';
+import { Absence, Client, Company, ExpenseData, MonthData, PayrollData, TimeEntry } from './types';
 import { DayAbsences, toDayAbsences } from './absences';
 import { GitConfig, GitFile, commitFiles, loadGitConfig, saveGitConfig } from './git';
 import { EMPTY_EXPENSE_DATA, sortExpenses } from './expenses';
+import { EMPTY_PAYROLL } from './payroll';
 
 export interface GitStatus {
   busy: boolean;
@@ -27,6 +28,7 @@ interface StoreCtx {
   extras: Record<string, string[]>;   // clientId → extra-field values, most recently used first
   absences: Record<string, DayAbsences>; // ISO date → Ferien / Krank / Feiertag (one full day or up to two halves)
   expenseData: ExpenseData;
+  payrollData: PayrollData;
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
@@ -41,6 +43,7 @@ interface StoreCtx {
   touchExtra: (clientId: string, value: string) => void;
   setAbsence: (date: string, absences: DayAbsences | null) => void;
   setExpenseData: (fn: (d: ExpenseData) => ExpenseData) => void;
+  setPayrollData: (fn: (d: PayrollData) => PayrollData) => void;
   saveReceipt: (file: File, date: string) => Promise<string>;
   openReceipt: (path: string) => Promise<File>;
   deleteReceipt: (path: string) => Promise<void>;
@@ -57,7 +60,7 @@ interface StoreCtx {
 }
 
 const GIT_COMMIT_DELAY_MS = 10_000; // collect changes, then one commit
-const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|absences|expenses)\.json$/;
+const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|absences|expenses|payroll)\.json$/;
 const RECEIPT_DIR = 'belege';
 
 type YM = { year: number; month: number };
@@ -251,6 +254,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const expenseRef = useRef<ExpenseData>(EMPTY_EXPENSE_DATA);
   const expensesReadableRef = useRef(true); // false if expenses.json could not be read → never overwrite it
   const expenseWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const [payrollData, setPayrollDataState] = useState<PayrollData>(EMPTY_PAYROLL);
+  const payrollRef = useRef<PayrollData>(EMPTY_PAYROLL);
+  const payrollReadableRef = useRef(true); // false if payroll.json could not be read → never overwrite it
+  const payrollWriteRef = useRef<Promise<void>>(Promise.resolve());
   const [currentMonth, setCurrentMonth] = useState<YM>({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [ioError, setIoError] = useState<string | null>(null);
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
@@ -455,6 +462,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setExpenseDataState(EMPTY_EXPENSE_DATA);
       expensesReadableRef.current = isNotFound(e);
       if (!isNotFound(e)) fail('Lesen von expenses.json fehlgeschlagen', e);
+    }
+    try {
+      const text = await (await (await dir.getFileHandle('payroll.json')).getFile()).text();
+      const pd = text.trim() ? JSON.parse(text) as PayrollData : EMPTY_PAYROLL;
+      if (typeof pd.months !== 'object' || pd.months == null) throw new Error('Datei hat kein gültiges "months"-Feld');
+      const norm = { employee: pd.employee ?? EMPTY_PAYROLL.employee, rates: pd.rates ?? {}, months: pd.months };
+      payrollRef.current = norm;
+      setPayrollDataState(norm);
+      payrollReadableRef.current = true;
+    } catch (e) {
+      payrollRef.current = EMPTY_PAYROLL;
+      setPayrollDataState(EMPTY_PAYROLL);
+      payrollReadableRef.current = isNotFound(e);
+      if (!isNotFound(e)) fail('Lesen von payroll.json fehlgeschlagen', e);
     }
     setProjects(pr);
     setExtras(ex);
@@ -668,6 +689,24 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       .catch(e => fail('Speichern von expenses.json fehlgeschlagen', e));
   }, []);
 
+  // Payroll lives in one file, written in order like the expenses
+  const setPayrollData = useCallback((fn: (d: PayrollData) => PayrollData) => {
+    const next = fn(payrollRef.current);
+    const sortKeys = <T,>(o: Record<string, T>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+    const sorted: PayrollData = { employee: next.employee, rates: sortKeys(next.rates), months: sortKeys(next.months) };
+    payrollRef.current = sorted;
+    setPayrollDataState(sorted);
+    const dir = dirRef.current;
+    if (!dir) return;
+    if (!payrollReadableRef.current) {
+      setIoError('payroll.json konnte nicht gelesen werden — Lohndaten werden nicht gespeichert, um die Datei nicht zu überschreiben.');
+      return;
+    }
+    payrollWriteRef.current = payrollWriteRef.current
+      .then(() => writeData(dir, 'payroll.json', sorted))
+      .catch(e => fail('Speichern von payroll.json fehlgeschlagen', e));
+  }, []);
+
   // Store a receipt as belege/YYYY-MM/YYYY-MM-DD_<name>; returns its relative path
   const saveReceipt = useCallback(async (file: File, date: string): Promise<string> => {
     const dir = dirRef.current;
@@ -761,9 +800,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, projects, extras, absences, expenseData, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
+      company, clients, entries, projects, extras, absences, expenseData, payrollData, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
       setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra, setAbsence,
-      setExpenseData, saveReceipt, openReceipt, deleteReceipt,
+      setExpenseData, setPayrollData, saveReceipt, openReceipt, deleteReceipt,
       pickDirectory, reconnectDirectory, toggleTheme, showMonths, readMonthEntries,
       gitConfig, setGitConfig, gitStatus, commitNow, commitAllData,
     }}>

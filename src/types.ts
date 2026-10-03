@@ -135,3 +135,41 @@ export interface ExpenseData {
   expenses: Expense[];
   months: Record<string, ExpenseMonth>; // "YYYY-MM" → status
 }
+
+// ── Payroll (Lohn) ───────────────────────────────────────────────────────────
+export interface PayrollRates {
+  // employee deductions in % of the AHV salary
+  ahv: number;          // AHV/IV/EO
+  alv: number;
+  nbu: number;          // Nichtberufsunfall
+  ktg: number;          // Krankentaggeld (employee share)
+  // BVG (pension fund) per policy: insured salary = annual salary − coordination deduction
+  bvgSalary: number;    // annual salary for BVG
+  bvgCoordination: number;
+  bvgEmployee: number;  // % of the insured salary
+  bvgEmployer: number;  // % of the insured salary
+  // employer contributions in % of the AHV salary
+  agAhv: number;
+  agAlv: number;
+  fak: number;          // Familienausgleichskasse
+  vk: number;           // Verwaltungskosten in % of the AHV contributions (AN + AG)
+  bu: number;           // Berufsunfall
+  agKtg: number;
+  alvCeiling: number;   // annual maximum salary for ALV / UVG (e.g. 148200)
+  childAllowance: number; // CHF per child and month
+}
+
+export interface PayrollMonth {
+  gross: number;
+  bonus?: number;
+  children?: number;
+  withholdingTax?: number; // Quellensteuer (deduction)
+  advance?: number;        // à-conto already paid out (reduces the payout)
+  paidAt?: string;         // ISO date the payout was made; locks the month
+}
+
+export interface PayrollData {
+  employee: { name: string; ahvNr: string };
+  rates: Record<string, PayrollRates>;   // "YYYY" → rates of that year
+  months: Record<string, PayrollMonth>;  // "YYYY-MM" → month
+}
