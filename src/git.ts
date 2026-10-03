@@ -81,9 +81,20 @@ export async function testConnection(cfg: GitConfig): Promise<string> {
   return `Verbunden mit ${repo.full_name} (${repo.private ? 'privat' : 'öffentlich'}), Branch ${cfg.branch || 'main'}`;
 }
 
+// Text content, or binary content (receipts) as base64
+export type GitFile = string | { base64: string };
+
 // Commit several files in ONE commit. Returns null when nothing changed.
-export async function commitFiles(cfg: GitConfig, files: Record<string, string>, message: string): Promise<string | null> {
+export async function commitFiles(cfg: GitConfig, files: Record<string, GitFile>, message: string): Promise<string | null> {
   const branch = cfg.branch || 'main';
+  // Binary files are uploaded as blobs first; the tree then references their sha
+  const entries = await Promise.all(Object.entries(files).map(async ([path, f]) => {
+    if (typeof f === 'string') return { path, mode: '100644', type: 'blob', content: f };
+    const blob = await json<{ sha: string }>(await gh(cfg, '/git/blobs', {
+      method: 'POST', body: JSON.stringify({ content: f.base64, encoding: 'base64' }),
+    }), `Upload von ${path} fehlgeschlagen`);
+    return { path, mode: '100644', type: 'blob', sha: blob.sha };
+  }));
   for (let attempt = 0; attempt < 2; attempt++) {
     const ref = await json<{ object: { sha: string } }>(
       await gh(cfg, `/git/ref/heads/${branch}`), `Branch "${branch}" nicht gefunden`);
@@ -94,7 +105,7 @@ export async function commitFiles(cfg: GitConfig, files: Record<string, string>,
       method: 'POST',
       body: JSON.stringify({
         base_tree: parent.tree.sha,
-        tree: Object.entries(files).map(([path, content]) => ({ path, mode: '100644', type: 'blob', content })),
+        tree: entries,
       }),
     }), 'Tree erstellen fehlgeschlagen');
     if (tree.sha === parent.tree.sha) return null; // identical to what's committed

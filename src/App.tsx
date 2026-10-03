@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings, TrendingUp, Timer } from 'lucide-react';
+import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings, TrendingUp, Timer, Wallet } from 'lucide-react';
 import { useStore } from './store';
 import { TimeEntry } from './types';
 import Calendar from './components/Calendar';
@@ -11,8 +11,9 @@ import ReportsView from './components/ReportsView';
 import AdminView from './components/AdminView';
 import RevenueView from './components/RevenueView';
 import WorktimeView from './components/WorktimeView';
+import ExpensesView from './components/ExpensesView';
 
-type View = 'calendar' | 'clients' | 'reports' | 'revenue' | 'worktime' | 'company' | 'admin';
+type View = 'calendar' | 'clients' | 'reports' | 'revenue' | 'worktime' | 'expenses' | 'company' | 'admin';
 
 type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
 
@@ -87,6 +88,7 @@ export default function App() {
         {navBtn('reports', BarChart2, 'Report')}
         {navBtn('revenue', TrendingUp, 'Umsatz')}
         {navBtn('worktime', Timer, 'Arbeitszeit')}
+        {navBtn('expenses', Wallet, 'Spesen')}
         {navBtn('clients', Users, 'Kunden')}
         {navBtn('company', Building2, 'Firma')}
 
@@ -167,6 +169,10 @@ export default function App() {
         ) : view === 'worktime' ? (
           <div className="flex-1 overflow-y-auto">
             <WorktimeView />
+          </div>
+        ) : view === 'expenses' ? (
+          <div className="flex-1 overflow-hidden">
+            <ExpensesView />
           </div>
         ) : view === 'admin' ? (
           <div className="flex-1 overflow-y-auto">

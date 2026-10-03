@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Absence, Client, Company, MonthData, TimeEntry } from './types';
+import { Absence, Client, Company, ExpenseData, MonthData, TimeEntry } from './types';
 import { DayAbsences, toDayAbsences } from './absences';
-import { GitConfig, commitFiles, loadGitConfig, saveGitConfig } from './git';
+import { GitConfig, GitFile, commitFiles, loadGitConfig, saveGitConfig } from './git';
+import { EMPTY_EXPENSE_DATA, sortExpenses } from './expenses';
 
 export interface GitStatus {
   busy: boolean;
@@ -25,6 +26,7 @@ interface StoreCtx {
   projects: Record<string, string[]>; // clientId → projects, most recently used first
   extras: Record<string, string[]>;   // clientId → extra-field values, most recently used first
   absences: Record<string, DayAbsences>; // ISO date → Ferien / Krank / Feiertag (one full day or up to two halves)
+  expenseData: ExpenseData;
   dirHandle: FileSystemDirectoryHandle | null;
   savedHandleAvailable: boolean;
   isDark: boolean;
@@ -38,6 +40,10 @@ interface StoreCtx {
   touchProject: (clientId: string, project: string) => void;
   touchExtra: (clientId: string, value: string) => void;
   setAbsence: (date: string, absences: DayAbsences | null) => void;
+  setExpenseData: (fn: (d: ExpenseData) => ExpenseData) => void;
+  saveReceipt: (file: File, date: string) => Promise<string>;
+  openReceipt: (path: string) => Promise<File>;
+  deleteReceipt: (path: string) => Promise<void>;
   pickDirectory: () => Promise<void>;
   reconnectDirectory: () => Promise<void>;
   toggleTheme: () => void;
@@ -51,7 +57,8 @@ interface StoreCtx {
 }
 
 const GIT_COMMIT_DELAY_MS = 10_000; // collect changes, then one commit
-const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|absences)\.json$/;
+const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|absences|expenses)\.json$/;
+const RECEIPT_DIR = 'belege';
 
 type YM = { year: number; month: number };
 
@@ -181,6 +188,27 @@ async function writeJson(dir: FileSystemDirectoryHandle, name: string, data: unk
   }
 }
 
+function toBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+// Resolve "a/b/c.pdf" to the directory handle of "a/b" and the file name
+async function resolvePath(dir: FileSystemDirectoryHandle, path: string, create: boolean) {
+  const parts = path.split('/');
+  const name = parts.pop()!;
+  let d = dir;
+  for (const p of parts) d = await d.getDirectoryHandle(p, { create });
+  return { dir: d, name };
+}
+
+async function exists(dir: FileSystemDirectoryHandle, name: string) {
+  try { await dir.getFileHandle(name); return true; }
+  catch (e) { if (isNotFound(e)) return false; throw e; }
+}
+
 // One-time migration: build the per-client MRU project list from all existing
 // month files (hours-YYYY-MM.json). Entries are processed chronologically so
 // the most recently used project ends up first.
@@ -219,6 +247,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [projects, setProjects] = useState<Record<string, string[]>>({});
   const [extras, setExtras] = useState<Record<string, string[]>>({});
   const [absences, setAbsences] = useState<Record<string, DayAbsences>>({});
+  const [expenseData, setExpenseDataState] = useState<ExpenseData>(EMPTY_EXPENSE_DATA);
+  const expenseRef = useRef<ExpenseData>(EMPTY_EXPENSE_DATA);
+  const expensesReadableRef = useRef(true); // false if expenses.json could not be read → never overwrite it
+  const expenseWriteRef = useRef<Promise<void>>(Promise.resolve());
   const [currentMonth, setCurrentMonth] = useState<YM>({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [ioError, setIoError] = useState<string | null>(null);
   const dirRef = useRef<FileSystemDirectoryHandle | null>(null);
@@ -227,7 +259,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [gitConfig, setGitConfigState] = useState<GitConfig>(loadGitConfig);
   const gitConfigRef = useRef(gitConfig);
   const [gitStatus, setGitStatus] = useState<GitStatus>({ busy: false, pending: [] });
-  const gitPendingRef = useRef<Map<string, string>>(new Map()); // file → content
+  const gitPendingRef = useRef<Map<string, GitFile>>(new Map()); // file → content
   const gitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitBusyRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -238,7 +270,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // `manual`: triggered by a button, so it runs even while auto-commit is off
-  const runCommit = useCallback((files: Map<string, string>, message: string, manual = false) => {
+  const runCommit = useCallback((files: Map<string, GitFile>, message: string, manual = false) => {
     gitBusyRef.current = gitBusyRef.current.then(async () => {
       const cfg = gitConfigRef.current;
       if ((!cfg.enabled && !manual) || files.size === 0) return;
@@ -274,7 +306,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await runCommit(files, `Daten aktualisiert: ${[...files.keys()].sort().join(', ')}`);
   }, [runCommit]);
 
-  const queueGit = (name: string, content: string) => {
+  const queueGit = (name: string, content: GitFile) => {
     if (!gitConfigRef.current.enabled) return;
     gitPendingRef.current.set(name, content);
     setGitStatus(s => ({ ...s, pending: [...gitPendingRef.current.keys()] }));
@@ -410,6 +442,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     ]);
     setCompanyState(c);
     setClientsState(cl);
+    try {
+      const text = await (await (await dir.getFileHandle('expenses.json')).getFile()).text();
+      const ed = text.trim() ? JSON.parse(text) as ExpenseData : EMPTY_EXPENSE_DATA;
+      if (!Array.isArray(ed.expenses)) throw new Error('Datei hat kein gültiges "expenses"-Feld');
+      const norm = { expenses: ed.expenses, months: ed.months ?? {} };
+      expenseRef.current = norm;
+      setExpenseDataState(norm);
+      expensesReadableRef.current = true;
+    } catch (e) {
+      expenseRef.current = EMPTY_EXPENSE_DATA;
+      setExpenseDataState(EMPTY_EXPENSE_DATA);
+      expensesReadableRef.current = isNotFound(e);
+      if (!isNotFound(e)) fail('Lesen von expenses.json fehlgeschlagen', e);
+    }
     setProjects(pr);
     setExtras(ex);
     if (va) {
@@ -602,6 +648,67 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // Expenses live in one file; writes run in order so the newest state wins
+  const setExpenseData = useCallback((fn: (d: ExpenseData) => ExpenseData) => {
+    const next = fn(expenseRef.current);
+    const sorted: ExpenseData = {
+      expenses: sortExpenses(next.expenses),
+      months: Object.fromEntries(Object.entries(next.months).sort(([a], [b]) => a.localeCompare(b))),
+    };
+    expenseRef.current = sorted;
+    setExpenseDataState(sorted);
+    const dir = dirRef.current;
+    if (!dir) return;
+    if (!expensesReadableRef.current) {
+      setIoError('expenses.json konnte nicht gelesen werden — Spesen werden nicht gespeichert, um die Datei nicht zu überschreiben.');
+      return;
+    }
+    expenseWriteRef.current = expenseWriteRef.current
+      .then(() => writeData(dir, 'expenses.json', sorted))
+      .catch(e => fail('Speichern von expenses.json fehlgeschlagen', e));
+  }, []);
+
+  // Store a receipt as belege/YYYY-MM/YYYY-MM-DD_<name>; returns its relative path
+  const saveReceipt = useCallback(async (file: File, date: string): Promise<string> => {
+    const dir = dirRef.current;
+    if (!dir) throw new Error('Kein Datenverzeichnis gewählt');
+    const folder = await (await dir.getDirectoryHandle(RECEIPT_DIR, { create: true }))
+      .getDirectoryHandle(date.slice(0, 7), { create: true });
+    const clean = file.name.normalize('NFC').replace(/[^\w.\-äöüÄÖÜéèàç ]+/g, '_').trim() || 'beleg';
+    const dot = clean.lastIndexOf('.');
+    const base = `${date}_${dot > 0 ? clean.slice(0, dot) : clean}`;
+    const ext = dot > 0 ? clean.slice(dot) : '';
+    let name = `${base}${ext}`;
+    for (let i = 2; await exists(folder, name); i++) name = `${base}-${i}${ext}`;
+    const buf = await file.arrayBuffer();
+    const w = await (await folder.getFileHandle(name, { create: true })).createWritable();
+    await w.write(buf);
+    await w.close();
+    const path = `${RECEIPT_DIR}/${date.slice(0, 7)}/${name}`;
+    queueGit(path, { base64: toBase64(buf) });
+    return path;
+  }, []);
+
+  const openReceipt = useCallback(async (path: string): Promise<File> => {
+    const dir = dirRef.current;
+    if (!dir) throw new Error('Kein Datenverzeichnis gewählt');
+    const r = await resolvePath(dir, path, false);
+    return (await r.dir.getFileHandle(r.name)).getFile();
+  }, []);
+
+  // Removes the local file only; git keeps it in the history
+  const deleteReceipt = useCallback(async (path: string) => {
+    const dir = dirRef.current;
+    if (!dir) return;
+    try {
+      const r = await resolvePath(dir, path, false);
+      await r.dir.removeEntry(r.name);
+    } catch (e) {
+      if (!isNotFound(e)) throw e;
+    }
+    gitPendingRef.current.delete(path);
+  }, []);
+
   // For reports: in-memory content if the month is loaded (includes unsaved
   // changes), otherwise read from disk — in queue order after pending writes.
   const readMonthEntries = useCallback(async (year: number, month: number): Promise<TimeEntry[]> => {
@@ -622,10 +729,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (!dir) { setGitStatus(s => ({ ...s, error: 'Kein Datenverzeichnis gewählt' })); return; }
     await flushWrites();
     const files = await enqueue(async () => {
-      const out = new Map<string, string>();
+      const out = new Map<string, GitFile>();
       for await (const name of dir.keys()) {
         if (!DATA_FILE.test(name)) continue;
         out.set(name, await (await (await dir.getFileHandle(name)).getFile()).text());
+      }
+      // Receipts: belege/<YYYY-MM>/<file>
+      let receipts: FileSystemDirectoryHandle | null = null;
+      try { receipts = await dir.getDirectoryHandle(RECEIPT_DIR); } catch (e) { if (!isNotFound(e)) throw e; }
+      if (receipts) {
+        for await (const [month, h] of receipts.entries()) {
+          if (h.kind !== 'directory') continue;
+          for await (const [name, fh] of (h as FileSystemDirectoryHandle).entries()) {
+            if (fh.kind !== 'file' || name.startsWith('.')) continue;
+            const buf = await (await (fh as FileSystemFileHandle).getFile()).arrayBuffer();
+            out.set(`${RECEIPT_DIR}/${month}/${name}`, { base64: toBase64(buf) });
+          }
+        }
       }
       return out;
     });
@@ -641,8 +761,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, projects, extras, absences, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
+      company, clients, entries, projects, extras, absences, expenseData, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
       setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra, setAbsence,
+      setExpenseData, saveReceipt, openReceipt, deleteReceipt,
       pickDirectory, reconnectDirectory, toggleTheme, showMonths, readMonthEntries,
       gitConfig, setGitConfig, gitStatus, commitNow, commitAllData,
     }}>

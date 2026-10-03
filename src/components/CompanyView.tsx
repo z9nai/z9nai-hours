@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import { Company } from '../types';
 import { useStore } from '../store';
+import { DEFAULT_KM_RATE } from '../expenses';
 
 function Field({ label, value, onChange, placeholder, isDark }: {
   label: string;
@@ -29,17 +30,30 @@ export default function CompanyView() {
 
   // Kept as text while typing so decimals like "8.4" can be entered
   const [hoursStr, setHoursStr] = useState('');
+  const [kmRateStr, setKmRateStr] = useState('');
+  const [allowanceStr, setAllowanceStr] = useState('');
   useEffect(() => {
     setF(company);
     setHoursStr(company.hoursPerDay != null ? String(company.hoursPerDay) : '');
+    setKmRateStr(company.kmRate != null ? String(company.kmRate) : '');
+    setAllowanceStr(company.expenseAllowance != null ? String(company.expenseAllowance) : '');
   }, [company]);
 
   const setAddr = (k: keyof Company['address'], v: string) =>
     setF(prev => ({ ...prev, address: { ...prev.address, [k]: v } }));
 
+  const num = (str: string) => {
+    const t = str.trim().replace(/['’\s]/g, '').replace(',', '.');
+    return t === '' ? undefined : Math.max(0, Number(t) || 0);
+  };
+
   const save = async () => {
-    const t = hoursStr.trim().replace(',', '.');
-    await setCompany({ ...f, hoursPerDay: t === '' ? undefined : Math.max(0, Number(t) || 0) });
+    await setCompany({
+      ...f,
+      hoursPerDay: num(hoursStr),
+      kmRate: num(kmRateStr),
+      expenseAllowance: num(allowanceStr),
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -86,6 +100,24 @@ export default function CompanyView() {
         <p className={`text-[11px] -mt-2 ${isDark ? 'text-white/35' : 'text-black/35'}`}>
           Vor dem Firmenstart werden weder Soll-Arbeitszeit noch Umsatzziele gerechnet.
           Soll pro Arbeitstag (Mo–Fr); Ferien, Krank und Feiertage reduzieren das Soll.
+        </p>
+
+        <div className={`text-[10px] uppercase tracking-wider pt-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>Spesen</div>
+        <div className="grid grid-cols-3 gap-3 items-end">
+          <Field label="Kilometersatz (CHF/km)" value={kmRateStr} onChange={setKmRateStr} placeholder={String(DEFAULT_KM_RATE)} isDark={isDark} />
+          <Field label="Pauschale / Monat (CHF)" value={allowanceStr} onChange={setAllowanceStr} placeholder="600" isDark={isDark} />
+          <div>
+            <label className={`block text-[10px] uppercase tracking-wider mb-1 ${isDark ? 'text-white/40' : 'text-black/40'}`}>Pauschale ab</label>
+            <input type="month" value={f.expenseAllowanceFrom ?? ''}
+              onChange={e => setF(p => ({ ...p, expenseAllowanceFrom: e.target.value || undefined }))}
+              className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${
+                isDark ? 'bg-white/5 border-white/10 text-white focus:border-white/30 [color-scheme:dark]' : 'bg-black/5 border-black/10 text-black focus:border-black/30'
+              }`} />
+          </div>
+        </div>
+        <p className={`text-[11px] -mt-2 ${isDark ? 'text-white/35' : 'text-black/35'}`}>
+          Der Kilometersatz wird bei jeder neuen Autofahrt übernommen; bestehende Fahrten behalten ihren Satz.
+          Ausbezahlte Monate behalten die Pauschale, mit der sie abgeschlossen wurden.
         </p>
 
         <div className="pt-2">

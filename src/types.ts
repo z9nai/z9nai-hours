@@ -19,6 +19,9 @@ export interface Company {
   phone: string;
   hoursPerDay?: number; // target working hours per working day (Arbeitszeit)
   startDate?: string;   // ISO date the company started; nothing before it is evaluated
+  kmRate?: number;            // CHF per km for car trips (Spesen)
+  expenseAllowance?: number;  // monthly lump-sum expense allowance (Pauschalspesen) in CHF
+  expenseAllowanceFrom?: string; // "YYYY-MM" the allowance applies from
 }
 
 export interface ContactPerson {
@@ -77,4 +80,33 @@ export type AbsenceType = 'ferien' | 'krank' | 'feiertag';
 export interface Absence {
   type: AbsenceType;
   half?: boolean; // half day
+}
+
+export type ExpenseKind = 'auto' | 'bahn' | 'other';
+
+export interface Expense {
+  id: string;
+  date: string;          // ISO date
+  kind: ExpenseKind;
+  clientId?: string;     // optional client the expense belongs to
+  purpose: string;       // Zweck
+  from?: string;         // auto: start
+  to?: string;           // auto: destination
+  km?: number;           // auto: distance
+  rate?: number;         // auto: CHF/km at the time of entry
+  route?: string;        // bahn: Strecke
+  art?: string;          // other: Verpflegung Mittag, Übernachtung, …
+  amount?: number;       // bahn / other: CHF (auto is km × rate)
+  receipts?: string[];   // paths relative to the data directory (belege/…)
+  receiptFiled?: boolean; // receipt kept elsewhere (paper, imported "Beleg abgelegt")
+}
+
+export interface ExpenseMonth {
+  paidAt?: string;       // ISO date the month was paid out; locks its expenses
+  allowance?: number;    // Pauschale snapshot taken when marked as paid
+}
+
+export interface ExpenseData {
+  expenses: Expense[];
+  months: Record<string, ExpenseMonth>; // "YYYY-MM" → status
 }
