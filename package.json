@@ -8,7 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "bexio-proxy": "node scripts/bexio-proxy.mjs"
+    "bexio-proxy": "node scripts/bexio-proxy.mjs",
+    "bexio-proxy:install": "sh scripts/bexio-proxy-agent.sh install",
+    "bexio-proxy:uninstall": "sh scripts/bexio-proxy-agent.sh uninstall",
+    "bexio-proxy:status": "sh scripts/bexio-proxy-agent.sh status"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

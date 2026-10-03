@@ -141,7 +141,9 @@ export default function AdminView() {
             Einstellungen → API-Tokens
           </a>{' '}
           erstellen (Buchhaltung lesen &amp; schreiben) und in <code>~/.config/z9nai-hours/bexio-token</code> ablegen.
-          Proxy starten mit <code>npm run bexio-proxy</code> im App-Verzeichnis. Funktioniert lokal und auf GitHub Pages.
+          Proxy einmalig als Hintergrunddienst einrichten mit <code>npm run bexio-proxy:install</code> im App-Verzeichnis
+          (startet danach automatisch bei der Anmeldung), oder manuell starten mit <code>npm run bexio-proxy</code>.
+          Funktioniert lokal und auf GitHub Pages.
         </p>
         <button className={btn} disabled={bexioTesting} onClick={testBexio}>
           <Plug size={12} /> {bexioTesting ? 'Teste…' : 'bexio-Verbindung und Konten testen'}
