@@ -27,12 +27,8 @@ export interface Company {
 }
 
 export interface BexioAccounts {
-  auto: string;      // debit account per expense kind, e.g. "6640"
-  bahn: string;
-  other: string;
-  allowance: string; // Pauschalspesen
-  credit: string;    // liability towards the payee, e.g. "2100"
-  bank?: string;     // bank account for the transfer booking; empty → bank import in bexio
+  expense: string;   // debit: expense account, e.g. "5832"
+  credit: string;    // liability towards the payee, e.g. "2100" (payout is matched via bexio's bank integration)
 }
 
 export interface Payee {
@@ -131,8 +127,6 @@ export interface BexioBooking {
   amount: number;
   entryId?: number;      // bexio manual entry id (absent: booked manually in bexio)
   refNr?: string;
-  transferEntryId?: number;
-  transferAt?: string;
   filesPath?: string;     // API path to attach files to this booking
   missingFiles?: string[]; // attachments that could not be uploaded (absent: unknown)
 }

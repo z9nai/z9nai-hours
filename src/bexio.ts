@@ -1,7 +1,7 @@
 // bexio API via the local proxy (scripts/bexio-proxy.mjs). bexio does not allow
 // browser calls from other origins, and the proxy keeps the token out of the app.
 import { BexioAccounts, Company } from './types';
-import { DEFAULT_BEXIO_ACCOUNTS, ExpenseMonthSum, round2 } from './expenses';
+import { DEFAULT_BEXIO_ACCOUNTS, ExpenseMonthSum } from './expenses';
 import { monthLabel } from './expenseExport';
 
 const LS_KEY = 'z9nai-hours-bexio';
@@ -99,30 +99,14 @@ const lastDayOf = (ym: string) => {
   return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
 };
 
-export interface BookingLine { account: string; amount: number; text: string }
-
-// Debit lines per account (kinds sharing an account are merged), one credit line
+// One booking per month: debit expense account, credit liability towards the payee
 export function bookingPlan(sum: ExpenseMonthSum, accounts: BexioAccounts) {
-  const label = monthLabel(sum.ym);
-  const parts: { account: string; amount: number; what: string }[] = [
-    { account: accounts.auto, amount: sum.auto, what: `Auto ${sum.km} km` },
-    { account: accounts.bahn, amount: sum.bahn, what: 'Bahn/ÖV' },
-    { account: accounts.other, amount: sum.other, what: 'Übrige' },
-    { account: accounts.allowance, amount: sum.allowance, what: 'Pauschale' },
-  ].filter(p => p.amount > 0);
-  const byAccount = new Map<string, { amount: number; what: string[] }>();
-  for (const p of parts) {
-    const cur = byAccount.get(p.account) ?? { amount: 0, what: [] };
-    byAccount.set(p.account, { amount: round2(cur.amount + p.amount), what: [...cur.what, p.what] });
-  }
-  const debits: BookingLine[] = [...byAccount].map(([account, v]) => ({
-    account, amount: v.amount, text: `Spesen ${label} (${v.what.join(', ')})`,
-  }));
   return {
     date: lastDayOf(sum.ym),
-    description: `Spesen ${label} gemäss Spesenaufstellung`,
-    debits,
-    credit: { account: accounts.credit, amount: sum.total, text: `Spesen ${label} gemäss Spesenaufstellung` } as BookingLine,
+    description: `Spesen ${monthLabel(sum.ym)} gemäss Spesenaufstellung`,
+    debit: accounts.expense,
+    credit: accounts.credit,
+    amount: sum.total,
   };
 }
 
@@ -180,55 +164,27 @@ export interface BookResult { entryId: number; refNr?: string; filesPath: string
 export async function bookExpenses(sum: ExpenseMonthSum, company: Company,
   files: UploadFile[], onStep: (msg: string) => void): Promise<BookResult> {
   const plan = bookingPlan(sum, bexioAccounts(company));
-  if (plan.debits.length === 0) throw new BexioError('Nichts zu buchen');
+  if (!(plan.amount > 0)) throw new BexioError('Nichts zu buchen');
   onStep('Konten und Währung laden…');
   const [accounts, currency, refNr] = await Promise.all([loadAccounts(), chfId(), nextRefNr()]);
-  const creditId = accountId(accounts, plan.credit.account, 'Haben');
-  const line = { currency_id: currency, currency_factor: 1 };
 
   onStep('Buchung erstellen…');
-  const single = plan.debits.length === 1;
-  const body = single
-    ? {
-      type: 'manual_single_entry', date: plan.date, ...(refNr ? { reference_nr: refNr } : {}),
-      entries: [{ ...line, debit_account_id: accountId(accounts, plan.debits[0].account, 'Soll'), credit_account_id: creditId,
-        amount: plan.credit.amount, description: plan.description }],
-    }
-    : {
-      type: 'manual_compound_entry', date: plan.date, ...(refNr ? { reference_nr: refNr } : {}),
-      entries: [
-        ...plan.debits.map(d => ({ ...line, debit_account_id: accountId(accounts, d.account, 'Soll'), amount: d.amount, description: d.text })),
-        { ...line, credit_account_id: creditId, amount: plan.credit.amount, description: plan.description },
-      ],
-    };
   const created = await call<CreatedEntry>('/3.0/accounting/manual_entries', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'manual_single_entry', date: plan.date, ...(refNr ? { reference_nr: refNr } : {}),
+      entries: [{
+        debit_account_id: accountId(accounts, plan.debit, 'Soll'), credit_account_id: accountId(accounts, plan.credit, 'Haben'),
+        amount: plan.amount, description: plan.description, currency_id: currency, currency_factor: 1,
+      }],
+    }),
   });
 
-  const filePath = single && created.entries?.[0]
+  const filePath = created.entries?.[0]
     ? `/3.0/accounting/manual_entries/${created.id}/entries/${created.entries[0].id}/files`
     : `/3.0/accounting/manual_entries/${created.id}/files`;
   const failed = await uploadFiles(filePath, files, onStep);
   return { entryId: created.id, refNr: created.reference_nr ?? refNr, filesPath: filePath, failed };
-}
-
-// Transfer to the private account: debit liability, credit bank
-export async function bookTransfer(ym: string, amount: number, date: string, company: Company): Promise<number> {
-  const acc = bexioAccounts(company);
-  if (!acc.bank) throw new BexioError('Kein Bankkonto für den Transfer hinterlegt');
-  const [accounts, currency, refNr] = await Promise.all([loadAccounts(), chfId(), nextRefNr()]);
-  const created = await call<CreatedEntry>('/3.0/accounting/manual_entries', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      type: 'manual_single_entry', date, ...(refNr ? { reference_nr: refNr } : {}),
-      entries: [{
-        debit_account_id: accountId(accounts, acc.credit, 'Spesen-Verbindlichkeit'),
-        credit_account_id: accountId(accounts, acc.bank, 'Bank'),
-        amount, description: `Spesen-Transfer ${monthLabel(ym)}`, currency_id: currency, currency_factor: 1,
-      }],
-    }),
-  });
-  return created.id;
 }
 
 // Check that all configured accounts exist (used by the settings "Testen" button)
@@ -238,9 +194,7 @@ export async function checkSetup(company: Company): Promise<string> {
   if (problem) throw new BexioError(problem);
   const accounts = await loadAccounts();
   const acc = bexioAccounts(company);
-  const roles: [string, string | undefined][] = [
-    ['Auto', acc.auto], ['Bahn', acc.bahn], ['Übrige', acc.other], ['Pauschale', acc.allowance], ['Haben', acc.credit], ['Bank', acc.bank],
-  ];
+  const roles: [string, string | undefined][] = [['Soll', acc.expense], ['Haben', acc.credit]];
   const names = roles.filter(([, no]) => no).map(([role, no]) => {
     accountId(accounts, no!, role);
     return `${no} ${accounts.get(no!.trim())!.name}`;

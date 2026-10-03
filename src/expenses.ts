@@ -2,9 +2,7 @@ import { BexioAccounts, Company, Expense, ExpenseData, ExpenseKind } from './typ
 
 export const DEFAULT_KM_RATE = 0.75;
 
-export const DEFAULT_BEXIO_ACCOUNTS: BexioAccounts = {
-  auto: '6640', bahn: '6640', other: '6640', allowance: '6640', credit: '2100', bank: '',
-};
+export const DEFAULT_BEXIO_ACCOUNTS: BexioAccounts = { expense: '5832', credit: '2100' };
 
 export const EXPENSE_KINDS: Record<ExpenseKind, { label: string; short: string }> = {
   auto:  { label: 'Fahrt Auto', short: 'Auto' },

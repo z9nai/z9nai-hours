@@ -47,7 +47,9 @@ export default function CompanyView() {
     : isQrIban(payee.iban) ? 'QR-IBAN nicht möglich – normale IBAN verwenden' : null;
 
   const bexio: BexioAccounts = { ...DEFAULT_BEXIO_ACCOUNTS, ...f.bexio };
-  const setBexio = (k: keyof BexioAccounts, v: string) => setF(prev => ({ ...prev, bexio: { ...bexio, [k]: v.trim() } }));
+  // Only the current fields are kept (drops keys of older versions)
+  const setBexio = (k: keyof BexioAccounts, v: string) =>
+    setF(prev => ({ ...prev, bexio: { expense: bexio.expense, credit: bexio.credit, [k]: v.trim() } }));
 
   const setAddr = (k: keyof Company['address'], v: string) =>
     setF(prev => ({ ...prev, address: { ...prev.address, [k]: v } }));
@@ -151,19 +153,13 @@ export default function CompanyView() {
         </p>
 
         <div className={`text-[10px] uppercase tracking-wider pt-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>Spesen-Buchung in bexio (Kontonummern)</div>
-        <div className="grid grid-cols-4 gap-3">
-          <Field label="Soll Auto" value={bexio.auto} onChange={v => setBexio('auto', v)} placeholder="6640" isDark={isDark} />
-          <Field label="Soll Bahn / ÖV" value={bexio.bahn} onChange={v => setBexio('bahn', v)} placeholder="6640" isDark={isDark} />
-          <Field label="Soll Übrige" value={bexio.other} onChange={v => setBexio('other', v)} placeholder="6640" isDark={isDark} />
-          <Field label="Soll Pauschale" value={bexio.allowance} onChange={v => setBexio('allowance', v)} placeholder="6640" isDark={isDark} />
-        </div>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Soll (Spesenaufwand)" value={bexio.expense} onChange={v => setBexio('expense', v)} placeholder="5832" isDark={isDark} />
           <Field label="Haben (Verbindlichkeit)" value={bexio.credit} onChange={v => setBexio('credit', v)} placeholder="2100" isDark={isDark} />
-          <Field label="Bank für Transfer" value={bexio.bank ?? ''} onChange={v => setBexio('bank', v)} placeholder="z.B. 1020" isDark={isDark} />
         </div>
         <p className={`text-[11px] -mt-2 ${isDark ? 'text-white/35' : 'text-black/35'}`}>
-          Pro Monat eine Buchung Soll Spesenaufwand / Haben Verbindlichkeit, Belege und Spesenabrechnung als Anhang.
-          Bank für Transfer leer lassen, wenn die Überweisung über den Bankimport in bexio zugeordnet wird.
+          Pro Monat eine Buchung Soll Spesenaufwand / Haben Verbindlichkeit, mit Spesenabrechnung und Belegen als Anhang.
+          Die Überweisung aufs Privatkonto ordnest du über die Bank-Integration in bexio der Verbindlichkeit zu.
           Saldosteuersatz: Spesen werden ohne Vorsteuer gebucht. Verbindung unter Admin → bexio.
         </p>
 

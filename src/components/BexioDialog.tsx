@@ -5,7 +5,7 @@ import { BexioBooking } from '../types';
 import { fmtChf, monthSum, ymOf } from '../expenses';
 import { monthLabel } from '../expenseExport';
 import {
-  BexioError, UploadFile, bexioAccounts, bookExpenses, bookTransfer, bookingPlan, connectUrl, findFilesPath, proxyHealth,
+  BexioError, UploadFile, bexioAccounts, bookExpenses, bookingPlan, connectUrl, findFilesPath, proxyHealth,
   tokenDaysLeft, tokenProblem, uploadFiles,
 } from '../bexio';
 
@@ -111,20 +111,6 @@ export default function BexioDialog({ ym, onClose }: { ym: string; onClose: () =
   // Bookings from before missingFiles was tracked: offer to upload everything
   const pendingFiles = booked?.entryId ? booked.missingFiles ?? [pdfName, ...receipts.map(baseName)] : [];
 
-  const transfer = async () => {
-    if (!booked) return;
-    setBusy(true); setError(null);
-    try {
-      const date = month?.paidAt ?? todayIso();
-      const id = await bookTransfer(ym, booked.amount, date, company);
-      saveBooking({ ...booked, transferEntryId: id, transferAt: date });
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const unlink = () => {
     if (!confirm('Verknüpfung zur bexio-Buchung lösen? Die Buchung in bexio bleibt bestehen und muss dort bei Bedarf manuell gelöscht werden. Die Spesen werden wieder bearbeitbar (sofern nicht ausbezahlt).')) return;
     setExpenseData(d => {
@@ -171,21 +157,6 @@ export default function BexioDialog({ ym, onClose }: { ym: string; onClose: () =
                 Achtung: Das aktuelle Monatstotal (CHF {fmtChf(sum.total)}) weicht von der Buchung ab.
               </div>
             )}
-            <div className={`pt-3 border-t ${border}`}>
-              <div className={`text-[10px] uppercase tracking-wider mb-1.5 ${muted}`}>Transfer aufs Privatkonto</div>
-              {booked.transferEntryId ? (
-                <div>Gebucht am {fmtDate(booked.transferAt!)}: Soll {accounts.credit} / Haben {accounts.bank}, CHF {fmtChf(booked.amount)}</div>
-              ) : accounts.bank ? (
-                <div className="flex items-center gap-3">
-                  <button className={btn} disabled={busy || proxy !== 'ok'} onClick={transfer}>
-                    Transfer buchen: Soll {accounts.credit} / Haben {accounts.bank}
-                  </button>
-                  <span className={muted}>Datum: {fmtDate(month?.paidAt ?? todayIso())}</span>
-                </div>
-              ) : (
-                <div className={muted}>Wird über den Bankimport in bexio dem Konto {accounts.credit} zugeordnet.</div>
-              )}
-            </div>
           </div>
         ) : (
           <div className="space-y-4 text-xs">
@@ -199,24 +170,10 @@ export default function BexioDialog({ ym, onClose }: { ym: string; onClose: () =
                 </tr>
               </thead>
               <tbody className="tabular-nums">
-                {plan.debits.length === 1 ? (
-                  <tr className={`border-t ${border}`}>
-                    <td className="py-1.5">{plan.debits[0].account}</td><td>{plan.credit.account}</td>
-                    <td>{plan.description}</td><td className="text-right">{fmtChf(plan.credit.amount)}</td>
-                  </tr>
-                ) : (
-                  <>
-                    {plan.debits.map(d => (
-                      <tr key={d.account} className={`border-t ${border}`}>
-                        <td className="py-1.5">{d.account}</td><td /><td>{d.text}</td><td className="text-right">{fmtChf(d.amount)}</td>
-                      </tr>
-                    ))}
-                    <tr className={`border-t ${border}`}>
-                      <td className="py-1.5" /><td>{plan.credit.account}</td><td>{plan.description}</td>
-                      <td className="text-right">{fmtChf(plan.credit.amount)}</td>
-                    </tr>
-                  </>
-                )}
+                <tr className={`border-t ${border}`}>
+                  <td className="py-1.5">{plan.debit}</td><td>{plan.credit}</td>
+                  <td>{plan.description}</td><td className="text-right">{fmtChf(plan.amount)}</td>
+                </tr>
               </tbody>
             </table>
             <div className={muted}>Buchungsdatum {fmtDate(plan.date)}</div>
