@@ -1,17 +1,18 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   Car, Train, Receipt, Plus, ChevronLeft, ChevronRight, Printer, FileSpreadsheet, Check, Lock, Undo2,
-  Paperclip, X, Copy, Trash2, FileText, QrCode,
+  Paperclip, X, Copy, Trash2, FileText, QrCode, Landmark, BookCheck,
 } from 'lucide-react';
 import { useStore } from '../store';
 import { Expense, ExpenseKind } from '../types';
 import { clientColorClasses } from '../colors';
 import {
   DEFAULT_KM_RATE, EXPENSE_KINDS, EXPENSE_KIND_ORDER, OTHER_ARTS, expenseAmount, expenseTitle, fmtChf, hasReceipt,
-  isPaid, monthSum, round2, ymOf,
+  isLocked, isPaid, monthSum, round2, ymOf,
 } from '../expenses';
 import { exportYearXlsx, monthLabel, payoutMessage, printMonth } from '../expenseExport';
 import { payoutQr } from '../swissqr';
+import BexioDialog from './BexioDialog';
 
 const KIND_ICON: Record<ExpenseKind, React.ElementType> = { auto: Car, bahn: Train, other: Receipt };
 
@@ -54,6 +55,7 @@ export default function ExpensesView() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [qrYm, setQrYm] = useState<string | null>(null);
+  const [bexioYm, setBexioYm] = useState<string | null>(null);
 
   const curYm = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${pad(i + 1)}`);
@@ -65,7 +67,8 @@ export default function ExpensesView() {
   }), { km: 0, auto: 0, bahn: 0, other: 0, allowance: 0, total: 0 });
 
   const monthList = expenseData.expenses.filter(e => ymOf(e.date) === ym);
-  const monthPaid = isPaid(expenseData, ym);
+  const monthLocked = isLocked(expenseData, ym);
+  const monthState = expenseData.months[ym];
   const sel = monthSum(expenseData, company, ym);
 
   // ── Theme ──
@@ -105,8 +108,8 @@ export default function ExpensesView() {
   const save = async (e: Expense) => {
     if (!draft) return;
     const orig = expenseData.expenses.find(x => x.id === e.id);
-    if (isPaid(expenseData, ymOf(e.date)) || (orig && isPaid(expenseData, ymOf(orig.date)))) {
-      setError('Dieser Monat ist bereits ausbezahlt. Hebe zuerst die Auszahlung auf.');
+    if (isLocked(expenseData, ymOf(e.date)) || (orig && isLocked(expenseData, ymOf(orig.date)))) {
+      setError('Dieser Monat ist ausbezahlt oder in bexio gebucht und deshalb gesperrt.');
       return;
     }
     for (const p of draft.removed) await deleteReceipt(p).catch(() => {});
@@ -140,13 +143,14 @@ export default function ExpensesView() {
     if (isPaid(expenseData, m)) {
       if (!confirm(`Auszahlung ${monthLabel(m)} aufheben? Die Spesen werden wieder bearbeitbar.`)) return;
       setExpenseData(d => {
-        const { [m]: _, ...rest } = d.months;
-        return { ...d, months: rest };
+        const { [m]: cur, ...rest } = d.months;
+        // Keep the bexio booking (and its allowance snapshot) — only the payout is undone
+        return { ...d, months: cur?.bexio ? { ...rest, [m]: { allowance: cur.allowance, bexio: cur.bexio } } : rest };
       });
     } else {
       const s = monthSum(expenseData, company, m);
       if (!confirm(`${monthLabel(m)} als ausbezahlt markieren (CHF ${fmtChf(s.total)})? Die Spesen werden danach gesperrt.`)) return;
-      setExpenseData(d => ({ ...d, months: { ...d.months, [m]: { paidAt: todayIso(), allowance: s.allowance } } }));
+      setExpenseData(d => ({ ...d, months: { ...d.months, [m]: { ...d.months[m], paidAt: todayIso(), allowance: s.allowance } } }));
       if (draft && ymOf(draft.expense.date) === m) cancel();
     }
   };
@@ -209,6 +213,7 @@ export default function ExpensesView() {
             <tbody>
               {sums.map(s => {
                 const paidAt = expenseData.months[s.ym]?.paidAt;
+                const booked = expenseData.months[s.ym]?.bexio;
                 const isSel = s.ym === ym;
                 const future = s.ym > curYm;
                 return (
@@ -221,7 +226,13 @@ export default function ExpensesView() {
                     <td className="text-right px-2 tabular-nums">{num(s.other)}</td>
                     <td className="text-right px-2 tabular-nums">{num(s.allowance)}</td>
                     <td className="text-right px-2 tabular-nums font-semibold">{num(s.total)}</td>
-                    <td className="px-3">
+                    <td className="px-3 whitespace-nowrap">
+                      {booked && (
+                        <span className="inline-flex items-center mr-2 text-sky-500"
+                          title={`In bexio gebucht am ${fmtDate(booked.bookedAt)}${booked.refNr ? ` (${booked.refNr})` : ''}${booked.entryId ? '' : ' – manuell'}`}>
+                          <BookCheck size={12} />
+                        </span>
+                      )}
                       {paidAt ? (
                         <span className="inline-flex items-center gap-1 text-emerald-500"><Check size={11} /> {fmtDate(paidAt)}</span>
                       ) : s.total > 0 && !future ? (
@@ -236,6 +247,10 @@ export default function ExpensesView() {
                       <button className={iconBtn} disabled={s.total === 0}
                         onClick={() => setQrYm(s.ym)} title="QR-Code für die Auszahlung (E-Banking)">
                         <QrCode size={12} />
+                      </button>
+                      <button className={iconBtn} disabled={!booked && s.total === 0}
+                        onClick={() => setBexioYm(s.ym)} title={booked ? 'bexio-Buchung anzeigen' : 'In bexio buchen'}>
+                        <Landmark size={12} />
                       </button>
                       <button className={iconBtn} disabled={!paidAt && s.total === 0}
                         onClick={() => togglePaid(s.ym)} title={paidAt ? 'Auszahlung aufheben' : 'Als ausbezahlt markieren'}>
@@ -261,9 +276,13 @@ export default function ExpensesView() {
           {/* Selected month */}
           <div className="flex items-center gap-3 mb-3">
             <h3 className="text-sm font-semibold">{monthLabel(ym)}</h3>
-            {monthPaid && (
+            {monthLocked && (
               <span className={`inline-flex items-center gap-1 text-[11px] ${muted}`}>
-                <Lock size={11} /> ausbezahlt am {fmtDate(expenseData.months[ym]!.paidAt!)}
+                <Lock size={11} />
+                {[
+                  monthState?.bexio && `in bexio gebucht am ${fmtDate(monthState.bexio.bookedAt)}`,
+                  monthState?.paidAt && `ausbezahlt am ${fmtDate(monthState.paidAt)}`,
+                ].filter(Boolean).join(' · ')}
               </span>
             )}
             <span className={`text-xs ml-auto tabular-nums ${muted}`}>Total CHF {fmtChf(sel.total)}</span>
@@ -272,7 +291,7 @@ export default function ExpensesView() {
             {EXPENSE_KIND_ORDER.map(k => {
               const Icon = KIND_ICON[k];
               return (
-                <button key={k} className={btn} disabled={monthPaid} onClick={() => newExpense(k)}>
+                <button key={k} className={btn} disabled={monthLocked} onClick={() => newExpense(k)}>
                   <Plus size={11} /><Icon size={12} /> {EXPENSE_KINDS[k].label}
                 </button>
               );
@@ -331,6 +350,7 @@ export default function ExpensesView() {
         </div>
       </div>
 
+      {bexioYm && <BexioDialog ym={bexioYm} onClose={() => setBexioYm(null)} />}
       {qrYm && <QrDialog ym={qrYm} onClose={() => setQrYm(null)} onPaid={m => { setQrYm(null); togglePaid(m); }} />}
 
       {draft && (
@@ -338,7 +358,7 @@ export default function ExpensesView() {
           <ExpenseForm
             key={draft.expense.id}
             draft={draft}
-            locked={!draft.isNew && isPaid(expenseData, ymOf(draft.expense.date))}
+            locked={!draft.isNew && isLocked(expenseData, ymOf(draft.expense.date))}
             error={error}
             onChangeDraft={setDraft}
             onSave={save}
@@ -491,7 +511,7 @@ function ExpenseForm({
         {locked && (
           <div className={`flex items-start gap-2 text-[11px] p-2 rounded ${isDark ? 'bg-white/5 text-white/60' : 'bg-black/5 text-black/60'}`}>
             <Lock size={12} className="mt-0.5 flex-shrink-0" />
-            Monat ist ausbezahlt. Zum Ändern in der Übersicht die Auszahlung aufheben.
+            Monat ist ausbezahlt oder in bexio gebucht. Zum Ändern in der Übersicht die Auszahlung bzw. bexio-Buchung aufheben.
           </div>
         )}
 

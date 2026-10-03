@@ -23,6 +23,16 @@ export interface Company {
   expenseAllowance?: number;  // monthly lump-sum expense allowance (Pauschalspesen) in CHF
   expenseAllowanceFrom?: string; // "YYYY-MM" the allowance applies from
   payee?: Payee;              // private account expenses are paid out to (Swiss QR code)
+  bexio?: BexioAccounts;      // account numbers for booking expenses in bexio
+}
+
+export interface BexioAccounts {
+  auto: string;      // debit account per expense kind, e.g. "6640"
+  bahn: string;
+  other: string;
+  allowance: string; // Pauschalspesen
+  credit: string;    // liability towards the payee, e.g. "2100"
+  bank?: string;     // bank account for the transfer booking; empty → bank import in bexio
 }
 
 export interface Payee {
@@ -112,7 +122,17 @@ export interface Expense {
 
 export interface ExpenseMonth {
   paidAt?: string;       // ISO date the month was paid out; locks its expenses
-  allowance?: number;    // Pauschale snapshot taken when marked as paid
+  allowance?: number;    // Pauschale snapshot taken when marked as paid or booked
+  bexio?: BexioBooking;  // booked in bexio; locks its expenses
+}
+
+export interface BexioBooking {
+  bookedAt: string;      // ISO date
+  amount: number;
+  entryId?: number;      // bexio manual entry id (absent: booked manually in bexio)
+  refNr?: string;
+  transferEntryId?: number;
+  transferAt?: string;
 }
 
 export interface ExpenseData {

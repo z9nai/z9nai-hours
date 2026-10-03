@@ -1,6 +1,10 @@
-import { Company, Expense, ExpenseData, ExpenseKind } from './types';
+import { BexioAccounts, Company, Expense, ExpenseData, ExpenseKind } from './types';
 
 export const DEFAULT_KM_RATE = 0.75;
+
+export const DEFAULT_BEXIO_ACCOUNTS: BexioAccounts = {
+  auto: '6640', bahn: '6640', other: '6640', allowance: '6640', credit: '2100', bank: '',
+};
 
 export const EXPENSE_KINDS: Record<ExpenseKind, { label: string; short: string }> = {
   auto:  { label: 'Fahrt Auto', short: 'Auto' },
@@ -27,6 +31,9 @@ export function expenseAmount(e: Expense): number {
 export const hasReceipt = (e: Expense) => (e.receipts?.length ?? 0) > 0 || !!e.receiptFiled;
 
 export const isPaid = (data: ExpenseData, ym: string) => !!data.months[ym]?.paidAt;
+export const isBooked = (data: ExpenseData, ym: string) => !!data.months[ym]?.bexio;
+// Paid out or booked in bexio → expenses of the month can no longer change
+export const isLocked = (data: ExpenseData, ym: string) => isPaid(data, ym) || isBooked(data, ym);
 
 // Paid months keep the allowance they were paid with; open months follow the company setting
 export function allowanceFor(data: ExpenseData, company: Company, ym: string): number {

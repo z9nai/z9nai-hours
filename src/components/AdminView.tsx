@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { GitCommitHorizontal, Plug, Upload } from 'lucide-react';
 import { useStore } from '../store';
 import { parseRepo, testConnection } from '../git';
+import { DEFAULT_PROXY_URL, checkSetup, loadProxyUrl, saveProxyUrl } from '../bexio';
 
 function Field({ label, value, onChange, placeholder, isDark, type = 'text' }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; isDark: boolean; type?: string;
@@ -20,7 +21,17 @@ function Field({ label, value, onChange, placeholder, isDark, type = 'text' }: {
 }
 
 export default function AdminView() {
-  const { isDark, gitConfig, setGitConfig, gitStatus, commitNow, commitAllData, dirHandle } = useStore();
+  const { isDark, gitConfig, setGitConfig, gitStatus, commitNow, commitAllData, dirHandle, company } = useStore();
+  const [proxyUrl, setProxyUrl] = useState(loadProxyUrl);
+  const [bexioResult, setBexioResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [bexioTesting, setBexioTesting] = useState(false);
+
+  const testBexio = async () => {
+    setBexioTesting(true);
+    try { setBexioResult({ ok: true, text: await checkSetup(company) }); }
+    catch (e) { setBexioResult({ ok: false, text: e instanceof Error ? e.message : String(e) }); }
+    finally { setBexioTesting(false); }
+  };
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -117,6 +128,29 @@ export default function AdminView() {
           {gitStatus.lastMessage && <div className="text-right">{gitStatus.lastMessage}</div>}
           {gitStatus.error && <div className="text-red-400">Fehler: {gitStatus.error}</div>}
         </div>
+      </div>
+
+      <div className={`text-[10px] uppercase tracking-wider mt-10 mb-3 ${muted}`}>bexio</div>
+      <div className="space-y-4">
+        <Field label="Proxy-Adresse" value={proxyUrl} isDark={isDark} placeholder={DEFAULT_PROXY_URL}
+          onChange={v => { setProxyUrl(v); saveProxyUrl(v); }} />
+        <p className={`text-[11px] leading-relaxed ${muted}`}>
+          bexio erlaubt keine Aufrufe direkt aus dem Browser. Die App spricht deshalb mit einem kleinen lokalen Proxy,
+          der den API-Token hält. Token in bexio unter{' '}
+          <a href="https://office.bexio.com/index.php/admin/apiTokens" target="_blank" rel="noopener noreferrer" className="underline">
+            Einstellungen → API-Tokens
+          </a>{' '}
+          erstellen (Buchhaltung lesen &amp; schreiben) und in <code>~/.config/z9nai-hours/bexio-token</code> ablegen.
+          Proxy starten mit <code>npm run bexio-proxy</code> im App-Verzeichnis. Funktioniert lokal und auf GitHub Pages.
+        </p>
+        <button className={btn} disabled={bexioTesting} onClick={testBexio}>
+          <Plug size={12} /> {bexioTesting ? 'Teste…' : 'bexio-Verbindung und Konten testen'}
+        </button>
+        {bexioResult && (
+          <p className={`text-[11px] ${bexioResult.ok ? (isDark ? 'text-emerald-400' : 'text-emerald-600') : 'text-red-400'}`}>
+            {bexioResult.text}
+          </p>
+        )}
       </div>
     </div>
   );
