@@ -11,7 +11,8 @@
     "bexio-proxy": "node scripts/bexio-proxy.mjs",
     "bexio-proxy:install": "sh scripts/bexio-proxy-agent.sh install",
     "bexio-proxy:uninstall": "sh scripts/bexio-proxy-agent.sh uninstall",
-    "bexio-proxy:status": "sh scripts/bexio-proxy-agent.sh status"
+    "bexio-proxy:status": "sh scripts/bexio-proxy-agent.sh status",
+    "bexio-proxy:setup": "sh scripts/bexio-proxy-agent.sh setup"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

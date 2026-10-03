@@ -133,6 +133,8 @@ export interface BexioBooking {
   refNr?: string;
   transferEntryId?: number;
   transferAt?: string;
+  filesPath?: string;     // API path to attach files to this booking
+  missingFiles?: string[]; // attachments that could not be uploaded (absent: unknown)
 }
 
 export interface ExpenseData {

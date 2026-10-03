@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs the bexio proxy as a macOS LaunchAgent: starts at login, restarts if it stops.
-# Usage: scripts/bexio-proxy-agent.sh install | uninstall | status
+# Usage: scripts/bexio-proxy-agent.sh install | uninstall | status | setup
 set -e
 
 LABEL="ch.z9nai.hours.bexio-proxy"
@@ -41,6 +41,18 @@ EOF
     if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then echo "LaunchAgent aktiv"; else echo "LaunchAgent nicht installiert"; fi
     curl -s http://localhost:${BEXIO_PROXY_PORT:-8787}/health && echo || echo "Proxy antwortet nicht"
     ;;
+  setup)
+    # Client ID / secret of the registered bexio app (OAuth); the secret is not echoed
+    printf "Client ID: "; read -r CID
+    printf "Client Secret (Eingabe unsichtbar): "; stty -echo; read -r CSECRET; stty echo; echo
+    [ -n "$CID" ] && [ -n "$CSECRET" ] || { echo "Abgebrochen: beide Werte nötig"; exit 1; }
+    mkdir -p "$HOME/.config/z9nai-hours"
+    CID="$CID" CSECRET="$CSECRET" node -e '
+      const fs = require("fs"), f = require("os").homedir() + "/.config/z9nai-hours/bexio-oauth.json";
+      fs.writeFileSync(f, JSON.stringify({ clientId: process.env.CID.trim(), clientSecret: process.env.CSECRET.trim() }, null, 2), { mode: 0o600 });
+      fs.chmodSync(f, 0o600);'
+    echo "Gespeichert in ~/.config/z9nai-hours/bexio-oauth.json – jetzt in der App unter Admin «Mit bexio verbinden» klicken."
+    ;;
   *)
-    echo "Verwendung: $0 install | uninstall | status"; exit 1 ;;
+    echo "Verwendung: $0 install | uninstall | status | setup"; exit 1 ;;
 esac

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { GitCommitHorizontal, Plug, Upload } from 'lucide-react';
+import { GitCommitHorizontal, Link2, Plug, Upload } from 'lucide-react';
 import { useStore } from '../store';
 import { parseRepo, testConnection } from '../git';
-import { DEFAULT_PROXY_URL, checkSetup, loadProxyUrl, saveProxyUrl } from '../bexio';
+import { DEFAULT_PROXY_URL, checkSetup, connectUrl, loadProxyUrl, saveProxyUrl } from '../bexio';
 
 function Field({ label, value, onChange, placeholder, isDark, type = 'text' }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; isDark: boolean; type?: string;
@@ -136,18 +136,23 @@ export default function AdminView() {
           onChange={v => { setProxyUrl(v); saveProxyUrl(v); }} />
         <p className={`text-[11px] leading-relaxed ${muted}`}>
           bexio erlaubt keine Aufrufe direkt aus dem Browser. Die App spricht deshalb mit einem kleinen lokalen Proxy,
-          der den API-Token hält. Token in bexio unter{' '}
-          <a href="https://office.bexio.com/index.php/admin/apiTokens" target="_blank" rel="noopener noreferrer" className="underline">
-            Einstellungen → API-Tokens
-          </a>{' '}
-          erstellen (Buchhaltung lesen &amp; schreiben) und in <code>~/.config/z9nai-hours/bexio-token</code> ablegen.
-          Proxy einmalig als Hintergrunddienst einrichten mit <code>npm run bexio-proxy:install</code> im App-Verzeichnis
-          (startet danach automatisch bei der Anmeldung), oder manuell starten mit <code>npm run bexio-proxy</code>.
-          Funktioniert lokal und auf GitHub Pages.
+          der den Zugang hält. Einrichtung im App-Verzeichnis:
+          <br />1. Im{' '}
+          <a href="https://developer.bexio.com" target="_blank" rel="noopener noreferrer" className="underline">bexio-Entwicklerportal</a>{' '}
+          eine App registrieren, Redirect-URL <code>{proxyUrl.replace(/\/+$/, '')}/oauth/callback</code>.
+          <br />2. <code>npm run bexio-proxy:setup</code> – Client-ID und Secret eingeben (bleiben nur auf diesem Mac).
+          <br />3. <code>npm run bexio-proxy:install</code> – Proxy startet ab dann automatisch bei der Anmeldung.
+          <br />4. Hier «Mit bexio verbinden» klicken und in bexio zustimmen. Der Zugang erneuert sich danach selbst.
+          <br />Funktioniert lokal und auf GitHub Pages.
         </p>
-        <button className={btn} disabled={bexioTesting} onClick={testBexio}>
-          <Plug size={12} /> {bexioTesting ? 'Teste…' : 'bexio-Verbindung und Konten testen'}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button className={btn} onClick={() => window.open(connectUrl(), '_blank')}>
+            <Link2 size={12} /> Mit bexio verbinden
+          </button>
+          <button className={btn} disabled={bexioTesting} onClick={testBexio}>
+            <Plug size={12} /> {bexioTesting ? 'Teste…' : 'bexio-Verbindung und Konten testen'}
+          </button>
+        </div>
         {bexioResult && (
           <p className={`text-[11px] ${bexioResult.ok ? (isDark ? 'text-emerald-400' : 'text-emerald-600') : 'text-red-400'}`}>
             {bexioResult.text}

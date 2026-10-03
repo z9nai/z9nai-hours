@@ -36,7 +36,40 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export async function proxyHealth(): Promise<{ ok: boolean; tokenConfigured: boolean }> {
+export interface ProxyHealth {
+  ok: boolean;
+  mode?: 'pat' | 'oauth' | null;
+  oauthConfigured?: boolean;
+  tokenConfigured: boolean;     // a usable token is available
+  tokenExpires?: string | null; // personal access tokens only
+  scopes?: string[];            // granted OAuth scopes
+  error?: string | null;
+}
+
+// Opens the bexio login (OAuth) through the proxy in a new tab
+export const connectUrl = () => `${base()}/oauth/start`;
+
+// Days until the token expires (negative: expired); null if unknown
+export function tokenDaysLeft(h: ProxyHealth): number | null {
+  return h.tokenExpires ? Math.floor((Date.parse(h.tokenExpires) - Date.now()) / 86_400_000) : null;
+}
+
+const fmtExpiry = (iso: string) => new Date(iso).toLocaleDateString('de-CH');
+
+// Problem with the token that blocks booking, or null if it can be used
+export function tokenProblem(h: ProxyHealth): string | null {
+  if (h.error) return h.error;
+  if (!h.tokenConfigured) {
+    return h.oauthConfigured
+      ? 'Noch nicht mit bexio verbunden – unter Admin «Mit bexio verbinden» klicken.'
+      : 'Kein bexio-Zugang eingerichtet – im App-Verzeichnis «npm run bexio-proxy:setup» ausführen.';
+  }
+  const days = tokenDaysLeft(h);
+  if (days != null && days < 0) return `Der bexio-Token ist am ${fmtExpiry(h.tokenExpires!)} abgelaufen – auf developer.bexio.com/pat einen neuen erstellen.`;
+  return null;
+}
+
+export async function proxyHealth(): Promise<ProxyHealth> {
   try {
     const res = await fetch(`${base()}/health`);
     return await res.json();
@@ -113,11 +146,39 @@ async function upload(path: string, file: { name: string; blob: Blob }) {
   await call(path, { method: 'POST', body: fd });
 }
 
-export interface BookResult { entryId: number; refNr?: string; uploaded: number; failed: string[] }
+export interface UploadFile { name: string; blob: Blob }
+
+// Uploads one file per request; returns the names that failed (with reason)
+export async function uploadFiles(path: string, files: UploadFile[], onStep: (msg: string) => void) {
+  const failed: { name: string; reason: string }[] = [];
+  for (const [i, f] of files.entries()) {
+    onStep(`Beleg ${i + 1}/${files.length} hochladen: ${f.name}`);
+    try { await upload(path, f); }
+    catch (e) { failed.push({ name: f.name, reason: e instanceof Error ? e.message : String(e) }); }
+  }
+  return failed;
+}
+
+// Bookings made before the attach path was stored: look the entry up in bexio
+export async function findFilesPath(entryId: number): Promise<string> {
+  for (let offset = 0; offset < 10_000; offset += 500) {
+    const list = await call<CreatedEntry[]>(`/3.0/accounting/manual_entries?limit=500&offset=${offset}`);
+    const e = list.find(x => x.id === entryId);
+    if (e) {
+      return e.entries?.length === 1
+        ? `/3.0/accounting/manual_entries/${e.id}/entries/${e.entries[0].id}/files`
+        : `/3.0/accounting/manual_entries/${e.id}/files`;
+    }
+    if (list.length < 500) break;
+  }
+  throw new BexioError(`Buchung ${entryId} in bexio nicht gefunden (gelöscht?)`);
+}
+
+export interface BookResult { entryId: number; refNr?: string; filesPath: string; failed: { name: string; reason: string }[] }
 
 // Creates the expense booking and attaches the files (one request per file)
 export async function bookExpenses(sum: ExpenseMonthSum, company: Company,
-  files: { name: string; blob: Blob }[], onStep: (msg: string) => void): Promise<BookResult> {
+  files: UploadFile[], onStep: (msg: string) => void): Promise<BookResult> {
   const plan = bookingPlan(sum, bexioAccounts(company));
   if (plan.debits.length === 0) throw new BexioError('Nichts zu buchen');
   onStep('Konten und Währung laden…');
@@ -147,14 +208,8 @@ export async function bookExpenses(sum: ExpenseMonthSum, company: Company,
   const filePath = single && created.entries?.[0]
     ? `/3.0/accounting/manual_entries/${created.id}/entries/${created.entries[0].id}/files`
     : `/3.0/accounting/manual_entries/${created.id}/files`;
-  const failed: string[] = [];
-  let uploaded = 0;
-  for (const [i, f] of files.entries()) {
-    onStep(`Beleg ${i + 1}/${files.length} hochladen: ${f.name}`);
-    try { await upload(filePath, f); uploaded++; }
-    catch (e) { failed.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`); }
-  }
-  return { entryId: created.id, refNr: created.reference_nr ?? refNr, uploaded, failed };
+  const failed = await uploadFiles(filePath, files, onStep);
+  return { entryId: created.id, refNr: created.reference_nr ?? refNr, filesPath: filePath, failed };
 }
 
 // Transfer to the private account: debit liability, credit bank
@@ -179,7 +234,8 @@ export async function bookTransfer(ym: string, amount: number, date: string, com
 // Check that all configured accounts exist (used by the settings "Testen" button)
 export async function checkSetup(company: Company): Promise<string> {
   const h = await proxyHealth();
-  if (!h.tokenConfigured) throw new BexioError('Proxy läuft, aber es ist kein bexio-Token hinterlegt');
+  const problem = tokenProblem(h);
+  if (problem) throw new BexioError(problem);
   const accounts = await loadAccounts();
   const acc = bexioAccounts(company);
   const roles: [string, string | undefined][] = [
@@ -189,5 +245,9 @@ export async function checkSetup(company: Company): Promise<string> {
     accountId(accounts, no!, role);
     return `${no} ${accounts.get(no!.trim())!.name}`;
   });
-  return `Verbunden – ${[...new Set(names)].join(' · ')}`;
+  const expiry = h.tokenExpires ? ` · Token gültig bis ${fmtExpiry(h.tokenExpires)}` : '';
+  if (h.scopes && !h.scopes.includes('file')) {
+    throw new BexioError('Verbunden, aber ohne Berechtigung «file» – Belege können nicht angehängt werden. Bitte erneut «Mit bexio verbinden».');
+  }
+  return `Verbunden – ${[...new Set(names)].join(' · ')}${expiry}`;
 }

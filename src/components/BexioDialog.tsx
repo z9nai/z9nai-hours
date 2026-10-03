@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookCheck, FileText, Landmark, X } from 'lucide-react';
+import { BookCheck, FileText, Landmark, Upload, X } from 'lucide-react';
 import { useStore } from '../store';
 import { BexioBooking } from '../types';
 import { fmtChf, monthSum, ymOf } from '../expenses';
 import { monthLabel } from '../expenseExport';
-import { BexioError, bexioAccounts, bookExpenses, bookTransfer, bookingPlan, proxyHealth } from '../bexio';
+import {
+  BexioError, UploadFile, bexioAccounts, bookExpenses, bookTransfer, bookingPlan, connectUrl, findFilesPath, proxyHealth,
+  tokenDaysLeft, tokenProblem, uploadFiles,
+} from '../bexio';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -23,34 +26,55 @@ export default function BexioDialog({ ym, onClose }: { ym: string; onClose: () =
   const pdfName = `Spesen_${ym}_${(company.name || 'firma').split(/\s+/)[0].toLowerCase()}.pdf`;
 
   const [proxy, setProxy] = useState<'checking' | 'ok' | string>('checking');
+  const [expiryHint, setExpiryHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [reasons, setReasons] = useState<string[]>([]); // why uploads failed (this session)
 
   useEffect(() => {
     proxyHealth()
-      .then(h => setProxy(h.tokenConfigured ? 'ok' : 'Proxy läuft, aber es ist kein bexio-Token hinterlegt.'))
+      .then(h => {
+        setProxy(tokenProblem(h) ?? 'ok');
+        const days = tokenDaysLeft(h);
+        if (days != null && days >= 0 && days <= 7) {
+          setExpiryHint(`bexio-Token läuft in ${days} Tag${days === 1 ? '' : 'en'} ab – auf developer.bexio.com/pat erneuern.`);
+        }
+      })
       .catch(e => setProxy(errText(e)));
   }, []);
 
   const saveBooking = (b: BexioBooking) =>
     setExpenseData(d => ({ ...d, months: { ...d.months, [ym]: { ...d.months[ym], allowance: sum.allowance, bexio: b } } }));
 
-  const book = async () => {
-    setBusy(true); setError(null); setWarnings([]);
-    try {
+  // Statement PDF + receipts of the month; `only` limits to these file names
+  const collectFiles = async (only?: string[]) => {
+    const files: UploadFile[] = [];
+    const missing: { name: string; reason: string }[] = [];
+    if (!only || only.includes(pdfName)) {
       setStep('Spesenabrechnung erstellen…');
       const { buildMonthPdf } = await import('../expensePdf'); // jsPDF is large: load on demand
-      const files: { name: string; blob: Blob }[] = [{ name: pdfName, blob: buildMonthPdf(expenseData, company, clients, ym) }];
-      const missing: string[] = [];
-      for (const p of receipts) {
-        try { files.push({ name: baseName(p), blob: await openReceipt(p) }); }
-        catch { missing.push(`${baseName(p)}: Datei nicht gefunden`); }
-      }
+      files.push({ name: pdfName, blob: buildMonthPdf(expenseData, company, clients, ym) });
+    }
+    for (const p of receipts) {
+      if (only && !only.includes(baseName(p))) continue;
+      try { files.push({ name: baseName(p), blob: await openReceipt(p) }); }
+      catch { missing.push({ name: baseName(p), reason: 'Datei nicht gefunden' }); }
+    }
+    return { files, missing };
+  };
+
+  const book = async () => {
+    setBusy(true); setError(null); setReasons([]);
+    try {
+      const { files, missing } = await collectFiles();
       const r = await bookExpenses(sum, company, files, setStep);
-      saveBooking({ bookedAt: todayIso(), amount: sum.total, entryId: r.entryId, refNr: r.refNr });
-      setWarnings([...missing, ...r.failed]);
+      const failed = [...missing, ...r.failed];
+      saveBooking({
+        bookedAt: todayIso(), amount: sum.total, entryId: r.entryId, refNr: r.refNr,
+        filesPath: r.filesPath, missingFiles: failed.map(f => f.name),
+      });
+      setReasons(failed.map(f => `${f.name}: ${f.reason}`));
       setStep(null);
     } catch (e) {
       setError(errText(e));
@@ -64,6 +88,28 @@ export default function BexioDialog({ ym, onClose }: { ym: string; onClose: () =
     if (!confirm(`${monthLabel(ym)} als bereits manuell in bexio gebucht markieren (CHF ${fmtChf(sum.total)})? Die Spesen werden gesperrt.`)) return;
     saveBooking({ bookedAt: todayIso(), amount: sum.total });
   };
+
+  // Upload attachments that are missing on an existing booking
+  const retryFiles = async () => {
+    if (!booked?.entryId) return;
+    setBusy(true); setError(null); setReasons([]);
+    try {
+      setStep('Buchung in bexio suchen…');
+      const path = booked.filesPath ?? await findFilesPath(booked.entryId);
+      const { files, missing } = await collectFiles(booked.missingFiles);
+      const failed = [...missing, ...await uploadFiles(path, files, setStep)];
+      saveBooking({ ...booked, filesPath: path, missingFiles: failed.map(f => f.name) });
+      setReasons(failed.map(f => `${f.name}: ${f.reason}`));
+      setStep(null);
+    } catch (e) {
+      setError(errText(e));
+      setStep(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Bookings from before missingFiles was tracked: offer to upload everything
+  const pendingFiles = booked?.entryId ? booked.missingFiles ?? [pdfName, ...receipts.map(baseName)] : [];
 
   const transfer = async () => {
     if (!booked) return;
@@ -184,16 +230,23 @@ export default function BexioDialog({ ym, onClose }: { ym: string; onClose: () =
 
             <div className={proxy === 'ok' ? 'text-emerald-500' : proxy === 'checking' ? muted : 'text-red-400'}>
               {proxy === 'ok' ? 'bexio-Proxy verbunden' : proxy === 'checking' ? 'Prüfe bexio-Proxy…' : proxy}
+              {proxy.startsWith('Noch nicht mit bexio verbunden') && (
+                <button className="ml-2 underline" onClick={() => window.open(connectUrl(), '_blank')}>Jetzt verbinden</button>
+              )}
             </div>
+            {expiryHint && <div className="text-amber-500">{expiryHint}</div>}
           </div>
         )}
 
         {step && <div className={`mt-4 text-xs ${muted}`}>{step}</div>}
         {error && <div className="mt-4 text-xs text-red-400 break-words">{error}</div>}
-        {warnings.length > 0 && (
-          <div className="mt-4 text-xs text-amber-500 space-y-0.5">
-            <div>Gebucht, aber diese Anhänge fehlen – bitte in bexio manuell anhängen:</div>
-            {warnings.map(w => <div key={w}>· {w}</div>)}
+        {booked && pendingFiles.length > 0 && (
+          <div className="mt-4 text-xs text-amber-500 space-y-1">
+            <div>{booked.missingFiles ? 'Diese Anhänge fehlen in bexio noch:' : 'Anhänge in bexio nicht bestätigt:'}</div>
+            {(reasons.length ? reasons : pendingFiles).map(w => <div key={w}>· {w}</div>)}
+            <button className={`${btn} mt-2`} disabled={busy || proxy !== 'ok'} onClick={retryFiles}>
+              <Upload size={12} /> Anhänge hochladen
+            </button>
           </div>
         )}
 
