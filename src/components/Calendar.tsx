@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Copy, Check, CalendarOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, Check, CalendarOff, CalendarPlus } from 'lucide-react';
 import { AbsenceType, TimeEntry } from '../types';
 import { useStore } from '../store';
 import { clientColorClasses } from '../colors';
@@ -204,6 +204,24 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
 
   // The store holds all loaded months; entries outside the visible days are not rendered
   const displayEntries = entries;
+
+  // Keep the selected entry visible: jump to its week when it is created or moved
+  // outside the visible days (e.g. "Neuer Eintrag" or a date change in the dialog)
+  const selectedDate = entries.find(e => e.id === selectedId)?.date;
+  useEffect(() => {
+    if (!selectedDate || getWeekDays(weekOffset).some(d => dateToISO(d) === selectedDate)) return;
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const diffDays = Math.round((new Date(y, m - 1, d).getTime() - getWeekDays(0)[0].getTime()) / 86400000);
+    setWeekOffset(Math.floor(diffDays / 7));
+  }, [selectedId, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Neuer Eintrag": one hour today at the current hour
+  const todayISO = dateToISO(new Date());
+  const todayBlocked = blocksBooking(absences[todayISO]);
+  const newForToday = () => {
+    const h = Math.min(Math.max(new Date().getHours(), HOUR_START), HOUR_END - 1);
+    onSelect({ date: todayISO, startTime: `${String(h).padStart(2, '0')}:00`, endTime: `${String(h + 1).padStart(2, '0')}:00` });
+  };
 
   // Interaction stored in both ref (for event callbacks) and state (for rendering)
   const iaRef = useRef<Interaction | null>(null);
@@ -477,6 +495,11 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
           onClick={() => setWeekOffset(0)}
           className={`${weekMins > 0 ? '' : 'ml-auto '}text-[10px] px-2 py-0.5 rounded border transition-colors ${isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'}`}
         >Heute</button>
+        <button
+          onClick={newForToday} disabled={todayBlocked}
+          title={todayBlocked ? `Heute: ${absenceLabel(absences[todayISO])} – keine Buchung möglich` : 'Neuer Eintrag heute – oder im Kalender über einen Zeitraum ziehen'}
+          className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border transition-colors disabled:opacity-40 disabled:pointer-events-none ${isDark ? 'border-white/15 text-white/40 hover:border-white/30 hover:text-white/70' : 'border-black/15 text-black/40 hover:border-black/30 hover:text-black/70'}`}
+        ><CalendarPlus size={11} /> Neuer Eintrag</button>
       </div>
 
       {/* ── Day header row ── */}
@@ -534,7 +557,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
       </div>
 
       {/* ── Scrollable grid ── */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} data-cal-scroll className="flex-1 overflow-y-auto">
         <div ref={gridRef} className="flex" style={{ minHeight: TOTAL_SLOTS * SLOT_HEIGHT }}>
 
           {/* Time column */}
@@ -629,6 +652,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
                   return (
                     <div
                       key={entry.id}
+                      data-entry-id={entry.id}
                       className={`absolute left-0.5 right-0.5 rounded border text-[10px] overflow-hidden
                         ${color}
                         ${isSelected ? 'ring-1 ring-white/60' : descMissing ? 'ring-2 ring-red-500' : ''}
@@ -736,7 +760,7 @@ export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
       </div>
 
       {/* ── Tooltip / Sprechblase ── */}
-      {hoveredEntry && !ia && (() => {
+      {hoveredEntry && !ia && hoveredEntry.id !== selectedId && (() => {
         const tc = clients.find(c => c.id === hoveredEntry.clientId);
         const [sh, sm] = hoveredEntry.startTime.split(':').map(Number);
         const [eh, em] = hoveredEntry.endTime.split(':').map(Number);

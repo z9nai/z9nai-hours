@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Sun, Moon, FolderOpen, Clock, Users, Building2, BarChart2, Settings, TrendingUp, Timer, Wallet, Banknote } from 'lucide-react';
 import { useStore } from './store';
 import { TimeEntry } from './types';
 import Calendar from './components/Calendar';
-import EntryPanel from './components/EntryPanel';
+import EntryPopover from './components/EntryPanel';
 import { blocksBooking } from './absences';
 import ClientsView from './components/ClientsView';
 import CompanyView from './components/CompanyView';
@@ -50,10 +50,10 @@ export default function App() {
     setPanelEntry(entry);
   };
 
-  const handleClosePanel = () => {
+  const handleClosePanel = useCallback(() => {
     setPanelEntry(null);
     setSelectedId(null);
-  };
+  }, []);
 
   const bg = isDark ? 'bg-[#0e0f11]' : 'bg-[#f5f4f0]';
   const border = isDark ? 'border-white/8' : 'border-black/8';
@@ -152,9 +152,7 @@ export default function App() {
             <div className="flex-1 overflow-hidden">
               <Calendar onSelect={handleSelect} onEditEntry={handleEditEntry} selectedId={selectedId} />
             </div>
-            <div className="w-72 flex-shrink-0 overflow-hidden">
-              <EntryPanel entry={panelEntry} onClose={handleClosePanel} onNew={handleSelect} />
-            </div>
+            {panelEntry && <EntryPopover key={panelEntry.id} entry={panelEntry} onClose={handleClosePanel} />}
           </>
         ) : view === 'clients' ? (
           <div className="flex-1 overflow-y-auto">

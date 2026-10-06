@@ -1,15 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarPlus, MousePointerClick, Trash2, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Trash2, X } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
 import { absenceLabel, blocksBooking } from '../absences';
 
-type PanelEntry = Partial<TimeEntry> & { date: string; startTime: string; endTime: string };
-
 interface Props {
-  entry: TimeEntry | null;
+  entry: TimeEntry;
   onClose: () => void;
-  onNew: (entry: PanelEntry) => void;
 }
 
 const TIMES: string[] = [];
@@ -43,7 +40,8 @@ function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls
             e.preventDefault();
             if (open && filtered.length > 0) pick(filtered[0]);
             else { onCommit(value); setOpen(false); }
-          } else if (e.key === 'Escape') {
+          } else if (e.key === 'Escape' && open) {
+            e.stopPropagation(); // close only the suggestions, not the dialog
             setOpen(false);
           }
         }}
@@ -64,48 +62,104 @@ function ProjectInput({ value, onChange, onCommit, suggestions, isDark, inputCls
   );
 }
 
-export default function EntryPanel({ entry, onClose, onNew }: Props) {
-  const { isDark, absences } = useStore();
+const POP_W = 288;  // popover width in px
+const POP_GAP = 10; // distance to the time block
+const MARGIN = 8;   // min distance to the window edge
 
-  if (!entry) {
-    const now = new Date();
-    const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const todayAbsence = blocksBooking(absences[iso]) ? absences[iso] : undefined;
-    const newForToday = () => {
-      const h = Math.min(Math.max(now.getHours(), 5), 22);
-      const start = `${String(h).padStart(2, '0')}:00`;
-      const end = `${String(h + 1).padStart(2, '0')}:00`;
-      onNew({ date: iso, startTime: start, endTime: end });
+type PopPos = { left: number; top: number; arrowY: number; side: 'right' | 'left'; maxH: number };
+
+/**
+ * The entry form as a dialog right next to its time block in the calendar.
+ * The block is found via its data-entry-id; the dialog follows it on drag,
+ * resize, scrolling and window resize, and hides while the block is out of view.
+ */
+export default function EntryPopover({ entry, onClose }: Props) {
+  const { isDark } = useStore();
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<PopPos | null>(null);
+  const scrolledFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const el = document.querySelector<HTMLElement>(`[data-entry-id="${entry.id}"]`);
+      const scroller = el?.closest<HTMLElement>('[data-cal-scroll]');
+      if (!el || !scroller) { setPos(null); return; }
+      // Bring a freshly opened block into view once (e.g. "Neuer Eintrag" outside the visible hours)
+      if (scrolledFor.current !== entry.id) {
+        scrolledFor.current = entry.id;
+        el.scrollIntoView({ block: 'nearest' });
+      }
+      const r = el.getBoundingClientRect();
+      const s = scroller.getBoundingClientRect();
+      const visTop = Math.max(r.top, s.top);
+      const visBot = Math.min(r.bottom, s.bottom);
+      if (visBot <= visTop) { setPos(null); return; }
+
+      const maxH = window.innerHeight - 2 * MARGIN;
+      const h = Math.min(ref.current?.offsetHeight ?? 0, maxH);
+      const side = r.right + POP_GAP + POP_W <= window.innerWidth - MARGIN ? 'right' : 'left';
+      const left = side === 'right' ? r.right + POP_GAP : Math.max(MARGIN, r.left - POP_GAP - POP_W);
+      const anchorY = visTop + Math.min(14, (visBot - visTop) / 2);
+      const top = Math.max(MARGIN, Math.min(anchorY - 22, window.innerHeight - h - MARGIN));
+      const arrowY = Math.max(12, Math.min(anchorY - top, h - 12));
+      setPos(p => p && p.left === left && p.top === top && p.arrowY === arrowY && p.side === side && p.maxH === maxH
+        ? p : { left, top, arrowY, side, maxH });
     };
-    const bg = isDark ? 'bg-[#14151a] border-white/8' : 'bg-[#ededea] border-black/8';
-    const muted = isDark ? 'text-white/30' : 'text-black/30';
-    return (
-      <div className={`flex flex-col h-full border-l ${bg}`}>
-        <div className={`flex items-center px-4 py-3 border-b ${isDark ? 'border-white/8' : 'border-black/8'}`}>
-          <span className={`text-xs font-semibold uppercase tracking-widest ${isDark ? 'text-white/50' : 'text-black/50'}`}>
-            Eintrag
-          </span>
-        </div>
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
-          <MousePointerClick size={20} className={muted} />
-          <p className={`text-[11px] leading-relaxed ${muted}`}>
-            Ziehe im Kalender über einen Zeitraum,<br />
-            um einen neuen Eintrag zu erstellen.<br />
-            Klicke auf einen Eintrag, um ihn zu bearbeiten.
-          </p>
-          <button onClick={newForToday} disabled={!!todayAbsence}
-            title={todayAbsence ? `Heute: ${absenceLabel(todayAbsence)} – keine Buchung möglich` : undefined}
-            className={`mt-2 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border transition-colors disabled:opacity-40 disabled:pointer-events-none ${
-              isDark ? 'border-white/15 text-white/50 hover:border-white/30 hover:text-white' : 'border-black/15 text-black/50 hover:border-black/30 hover:text-black'
-            }`}>
-            <CalendarPlus size={12} /> Neuer Eintrag
-          </button>
-        </div>
-      </div>
-    );
-  }
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [entry.id]);
 
-  return <EntryForm entry={entry} onClose={onClose} />;
+  // Close on Escape or a click outside the dialog (clicks on time blocks select/drag them instead)
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (!t || ref.current?.contains(t) || t.closest?.('[data-entry-id]')) return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const panelCls = isDark
+    ? 'bg-[#1c1d22] border-white/12 shadow-[0_8px_32px_rgba(0,0,0,0.6)]'
+    : 'bg-white border-black/10 shadow-[0_8px_32px_rgba(0,0,0,0.15)]';
+  const arrowBg = isDark ? '#1c1d22' : '#ffffff';
+  const arrowBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)';
+  const toRight = pos?.side !== 'left';
+
+  return (
+    <div ref={ref} role="dialog" aria-label="Eintrag"
+      className={`fixed z-40 rounded-xl border flex flex-col ${panelCls}`}
+      style={{
+        left: pos?.left ?? 0, top: pos?.top ?? 0, width: POP_W, maxHeight: pos?.maxH,
+        visibility: pos ? 'visible' : 'hidden',
+      }}>
+      {/* Arrow pointing at the time block */}
+      <div style={{
+        position: 'absolute',
+        top: (pos?.arrowY ?? 12) - 5,
+        [toRight ? 'left' : 'right']: -6,
+        width: 10, height: 10,
+        background: arrowBg,
+        border: `1px solid ${arrowBorder}`,
+        borderRight: toRight ? 'none' : undefined,
+        borderTop:   toRight ? 'none' : undefined,
+        borderLeft:  toRight ? undefined : 'none',
+        borderBottom: toRight ? undefined : 'none',
+        transform: 'rotate(45deg)',
+      }} />
+      <div className="flex flex-col min-h-0 rounded-xl overflow-hidden">
+        <EntryForm entry={entry} onClose={onClose} />
+      </div>
+    </div>
+  );
 }
 
 function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }) {
@@ -178,7 +232,6 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
     onClose();
   };
 
-  const bg = isDark ? 'bg-[#14151a] border-white/8' : 'bg-[#ededea] border-black/8';
   const inputCls = isDark
     ? 'bg-white/5 border-white/10 text-white placeholder-white/20 focus:border-white/30'
     : 'bg-black/5 border-black/10 text-black placeholder-black/20 focus:border-black/30';
@@ -187,7 +240,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
   const descMissing  = descRequired && !form.description.trim();
 
   return (
-    <div className={`flex flex-col h-full border-l ${bg}`}>
+    <div className="flex flex-col min-h-0">
       {/* Header */}
       <div className={`flex items-center justify-between px-4 py-3 border-b ${isDark ? 'border-white/8' : 'border-black/8'}`}>
         <span className={`text-xs font-semibold uppercase tracking-widest ${isDark ? 'text-white/50' : 'text-black/50'}`}>
