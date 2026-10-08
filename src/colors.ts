@@ -11,6 +11,10 @@ export const CLIENT_COLORS: Record<string, { label: string; bg: string; border: 
 
 export const DEFAULT_COLOR = 'blue';
 
+// Non-billable internal hours (see internal.ts) — not selectable for clients
+const INTERNAL_COLOR = { label: 'Grau', bg: 'bg-slate-500/70', border: 'border-slate-400', dot: 'bg-slate-400', swatch: '#94a3b8' };
+
 export function clientColorClasses(colorKey: string) {
+  if (colorKey === 'internal') return INTERNAL_COLOR;
   return CLIENT_COLORS[colorKey] ?? CLIENT_COLORS[DEFAULT_COLOR];
 }

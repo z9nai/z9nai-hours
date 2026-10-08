@@ -3,6 +3,7 @@ import { Trash2, X } from 'lucide-react';
 import { TimeEntry } from '../types';
 import { useStore } from '../store';
 import { absenceLabel, blocksBooking } from '../absences';
+import { INTERNAL_ID } from '../internal';
 
 interface Props {
   entry: TimeEntry;
@@ -304,15 +305,13 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
         {/* Client */}
         <div>
           <label className={`block text-[10px] uppercase tracking-wider mb-1 ${labelCls}`}>Kunde</label>
-          {clients.length === 0 ? (
-            <p className={`text-[11px] ${isDark ? 'text-white/30' : 'text-black/30'}`}>Noch keine Kunden erfasst.</p>
-          ) : (
-            <select value={form.clientId} onChange={e => set('clientId', e.target.value)}
-              className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`}>
-              <option value="">— Kunde wählen —</option>
-              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          )}
+          <select value={form.clientId} onChange={e => set('clientId', e.target.value)}
+            className={`w-full text-xs px-3 py-2 rounded border outline-none transition-colors ${inputCls}`}>
+            <option value="">— Kunde wählen —</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clients.length > 0 && <option disabled>──────────</option>}
+            <option value={INTERNAL_ID}>Intern (nicht verrechenbar)</option>
+          </select>
         </div>
 
         {/* Project (required) */}

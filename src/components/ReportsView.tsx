@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { TimeEntry } from '../types';
 import { clientColorClasses } from '../colors';
+import { INTERNAL_CLIENT, withInternal } from '../internal';
 
 const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -46,6 +47,7 @@ function monthsBetween(fromISO: string, toISO: string): { y: number; m: number }
 
 export default function ReportsView() {
   const { clients, isDark, currentMonth, readMonthEntries } = useStore();
+  const allClients = useMemo(() => withInternal(clients), [clients]); // incl. non-billable "Intern"
 
   const now = new Date();
   const [year, setYear] = useState(currentMonth.year);
@@ -140,7 +142,7 @@ export default function ReportsView() {
 
   // CHF amount per row (null when the client has no hourly rate)
   const rowAmount = (row: { clientId: string; mins: number }): number | null => {
-    const rate = clients.find(c => c.id === row.clientId)?.hourlyRate;
+    const rate = allClients.find(c => c.id === row.clientId)?.hourlyRate;
     return rate != null ? (row.mins / 60) * rate : null;
   };
   const amounts = projectTotals.map(rowAmount);
@@ -184,6 +186,7 @@ export default function ReportsView() {
             className={`text-xs px-2 py-1.5 rounded border outline-none transition-colors ${selectCls}`}>
             <option value="all">Alle Kunden</option>
             {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value={INTERNAL_CLIENT.id}>Intern (nicht verrechenbar)</option>
           </select>
           {/* Project filter with search */}
           <div className="relative" ref={projectDropdownRef}>
@@ -375,7 +378,7 @@ export default function ReportsView() {
             <table className="w-full">
               <tbody>
                 {projectTotals.map((row, i) => {
-                  const rowClient = clients.find(c => c.id === row.clientId);
+                  const rowClient = allClients.find(c => c.id === row.clientId);
                   return (
                     <tr key={i} className={`border-t ${border}`}>
                       <td className={`px-4 py-2 text-xs ${isDark ? 'text-white/70' : 'text-black/70'}`}>
@@ -431,7 +434,7 @@ export default function ReportsView() {
                   </div>
                   {/* Day entries */}
                   {dayEntries.map((e, ei) => {
-                    const client = clients.find(c => c.id === e.clientId);
+                    const client = allClients.find(c => c.id === e.clientId);
                     const mins = parseMins(e.endTime) - parseMins(e.startTime);
                     return (
                       <div key={e.id}

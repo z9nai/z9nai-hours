@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Copy, Check, CalendarOff, CalendarPlus } fro
 import { AbsenceType, TimeEntry } from '../types';
 import { useStore } from '../store';
 import { clientColorClasses } from '../colors';
+import { withInternal } from '../internal';
 import { ABSENCE_ORDER, ABSENCE_TYPES, DayAbsences, absenceLabel, blocksBooking } from '../absences';
 
 const HOUR_START = 5;
@@ -184,7 +185,8 @@ interface Props {
 }
 
 export default function Calendar({ onSelect, onEditEntry, selectedId }: Props) {
-  const { entries, isDark, clients, addEntry, updateEntry, showMonths, absences, setAbsence } = useStore();
+  const { entries, isDark, clients: realClients, addEntry, updateEntry, showMonths, absences, setAbsence } = useStore();
+  const clients = useMemo(() => withInternal(realClients), [realClients]);
   const [absenceMenu, setAbsenceMenu] = useState<string | null>(null); // ISO date with open menu
   const closeAbsenceMenu = useCallback(() => setAbsenceMenu(null), []);
   const [weekOffset, setWeekOffset] = useState(0);

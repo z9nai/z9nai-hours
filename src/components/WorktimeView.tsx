@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useStore } from '../store';
 import { AbsenceType } from '../types';
 import { clientColorClasses } from '../colors';
+import { withInternal } from '../internal';
 import { ABSENCE_ORDER, ABSENCE_TYPES, absenceDays } from '../absences';
 import {
   Absences, BarSeries, LegendItem, MONTH_NAMES, MONTH_SHORT, MonthBar, MonthlyChart, Range, RangePicker, Theme, TipRow, Tooltip, YM,
@@ -158,10 +159,12 @@ export default function WorktimeView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [months, entries, readMonthEntries, start]);
 
-  // Fixed client order; bookings without a known client are grouped last
-  const unknownIds = Object.keys(hours).filter(id => !clients.some(c => c.id === id));
+  // Fixed client order, non-billable "Intern" after the clients; bookings
+  // without a known client are grouped last
+  const allClients = withInternal(clients);
+  const unknownIds = Object.keys(hours).filter(id => !allClients.some(c => c.id === id));
   const series: BarSeries[] = [
-    ...clients.map(c => ({ id: c.id, name: c.name, color: c.color, values: hours[c.id] ?? [] })),
+    ...allClients.map(c => ({ id: c.id, name: c.name, color: c.color, values: hours[c.id] ?? [] })),
     ...(unknownIds.length > 0 ? [{
       id: '__none', name: 'Ohne Kunde', color: '',
       values: months.map((_, i) => unknownIds.reduce((sum, id) => sum + hours[id][i], 0)),
