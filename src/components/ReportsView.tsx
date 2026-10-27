@@ -61,8 +61,15 @@ export default function ReportsView() {
 
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i);
 
+  // month / year 0 = "Alle": load every matching month file and merge
   useEffect(() => {
-    readMonthEntries(year, month).then(setMonthEntries);
+    const ys = year === 0 ? years : [year];
+    const ms = month === 0 ? Array.from({ length: 12 }, (_, i) => i + 1) : [month];
+    let cancelled = false;
+    Promise.all(ys.flatMap(y => ms.map(m => readMonthEntries(y, m))))
+      .then(parts => { if (!cancelled) setMonthEntries(parts.flat()); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, month, readMonthEntries]);
 
   // ── Kontingent usage: per client with quota, minutes used per month in the period ──
@@ -176,10 +183,12 @@ export default function ReportsView() {
         <div className="flex items-center gap-2">
           <select value={month} onChange={e => setMonth(Number(e.target.value))}
             className={`text-xs px-2 py-1.5 rounded border outline-none transition-colors ${selectCls}`}>
+            <option value={0}>Alle Monate</option>
             {MONTH_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
           </select>
           <select value={year} onChange={e => setYear(Number(e.target.value))}
             className={`text-xs px-2 py-1.5 rounded border outline-none transition-colors ${selectCls}`}>
+            <option value={0}>Alle Jahre</option>
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
           <select value={clientId} onChange={e => { setClientId(e.target.value); setProjectFilter('all'); }}
