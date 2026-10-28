@@ -18,12 +18,36 @@ export class BexioError extends Error {}
 
 const base = () => loadProxyUrl().replace(/\/+$/, '');
 
+// Chrome asks before a public page may reach localhost. The permission name
+// changed between versions, so ask for each; unknown names throw.
+async function localNetworkDenied(): Promise<boolean> {
+  for (const name of ['local-network-access', 'loopback-network', 'local-network']) {
+    try {
+      if ((await navigator.permissions.query({ name: name as PermissionName })).state === 'denied') return true;
+    } catch { /* not supported */ }
+  }
+  return false;
+}
+
+const isLocalPage = () => ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+
+// Why the proxy could not be reached, as specific as the browser lets us tell
+async function unreachable(): Promise<BexioError> {
+  if (await localNetworkDenied()) {
+    return new BexioError(
+      'Der Browser blockiert den Zugriff auf den bexio-Proxy. Erlauben: links in der Adressleiste auf das Symbol klicken → ' +
+      '«Lokales Netzwerk» (bzw. Website-Einstellungen → Zugriff auf lokales Netzwerk) auf «Zulassen» stellen, dann die Seite neu laden.');
+  }
+  return new BexioError(`bexio-Proxy nicht erreichbar (${base()}). Läuft "npm run bexio-proxy"?` + (isLocalPage() ? '' :
+    ' Falls ja: Der Browser muss dieser Seite den Zugriff aufs lokale Netzwerk erlauben (Symbol links in der Adressleiste); Safari erlaubt das nicht.'));
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${base()}/bexio${path}`, init);
   } catch {
-    throw new BexioError(`bexio-Proxy nicht erreichbar (${base()}). Läuft "npm run bexio-proxy"?`);
+    throw await unreachable();
   }
   const text = await res.text();
   let body: unknown = null;
@@ -74,7 +98,7 @@ export async function proxyHealth(): Promise<ProxyHealth> {
     const res = await fetch(`${base()}/health`);
     return await res.json();
   } catch {
-    throw new BexioError(`bexio-Proxy nicht erreichbar (${base()}). Läuft "npm run bexio-proxy"?`);
+    throw await unreachable();
   }
 }
 
