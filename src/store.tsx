@@ -26,6 +26,7 @@ interface StoreCtx {
   entries: TimeEntry[];
   projects: Record<string, string[]>; // clientId → projects, most recently used first
   extras: Record<string, string[]>;   // clientId → extra-field values, most recently used first
+  projectExtras: Record<string, Record<string, string>>; // clientId → project → last extra-field value (e.g. phase)
   absences: Record<string, DayAbsences>; // ISO date → Ferien / Krank / Feiertag (one full day or up to two halves)
   expenseData: ExpenseData;
   payrollData: PayrollData;
@@ -40,7 +41,7 @@ interface StoreCtx {
   updateEntry: (e: TimeEntry) => void;
   deleteEntry: (id: string) => void;
   touchProject: (clientId: string, project: string) => void;
-  touchExtra: (clientId: string, value: string) => void;
+  touchExtra: (clientId: string, value: string, project?: string) => void;
   setAbsence: (date: string, absences: DayAbsences | null) => void;
   setExpenseData: (fn: (d: ExpenseData) => ExpenseData) => void;
   setPayrollData: (fn: (d: PayrollData) => PayrollData) => void;
@@ -60,7 +61,7 @@ interface StoreCtx {
 }
 
 const GIT_COMMIT_DELAY_MS = 10_000; // collect changes, then one commit
-const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|absences|expenses|payroll)\.json$/;
+const DATA_FILE = /^(hours-\d{4}-\d{2}|clients|company|projects|extras|project-extras|absences|expenses|payroll)\.json$/;
 const RECEIPT_DIR = 'belege';
 
 type YM = { year: number; month: number };
@@ -249,6 +250,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [projects, setProjects] = useState<Record<string, string[]>>({});
   const [extras, setExtras] = useState<Record<string, string[]>>({});
+  const [projectExtras, setProjectExtras] = useState<Record<string, Record<string, string>>>({});
   const [absences, setAbsences] = useState<Record<string, DayAbsences>>({});
   const [expenseData, setExpenseDataState] = useState<ExpenseData>(EMPTY_EXPENSE_DATA);
   const expenseRef = useRef<ExpenseData>(EMPTY_EXPENSE_DATA);
@@ -440,11 +442,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loadAll = useCallback(async (dir: FileSystemDirectoryHandle) => {
-    const [c, cl, pr, ex, va] = await Promise.all([
+    const [c, cl, pr, ex, pe, va] = await Promise.all([
       readJson<Company>(dir, 'company.json', DEFAULT_COMPANY),
       readJson<Client[]>(dir, 'clients.json', []),
       readJson<Record<string, string[]>>(dir, 'projects.json', {}),
       readJson<Record<string, string[]>>(dir, 'extras.json', {}),
+      readJson<Record<string, Record<string, string>>>(dir, 'project-extras.json', {}),
       readJson<Record<string, unknown> | null>(dir, 'absences.json', null),
     ]);
     setCompanyState(c);
@@ -479,6 +482,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
     setProjects(pr);
     setExtras(ex);
+    setProjectExtras(pe);
     if (va) {
       const norm: Record<string, DayAbsences> = {};
       for (const [d, v] of Object.entries(va)) {
@@ -651,8 +655,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     touchMru(setProjects, 'projects.json', clientId, project);
   }, []);
 
-  const touchExtra = useCallback((clientId: string, value: string) => {
+  // Also remembers the value as the project's last one, so picking the project
+  // again pre-fills it (project and phase are coupled)
+  const touchExtra = useCallback((clientId: string, value: string, project?: string) => {
     touchMru(setExtras, 'extras.json', clientId, value);
+    const v = value.trim();
+    const p = project?.trim();
+    if (!clientId || !v || !p) return;
+    setProjectExtras(prev => {
+      if (prev[clientId]?.[p] === v) return prev;
+      const updated = { ...prev, [clientId]: { ...prev[clientId], [p]: v } };
+      if (dirRef.current) writeData(dirRef.current, 'project-extras.json', updated);
+      return updated;
+    });
   }, []);
 
   const setAbsence = useCallback((date: string, list: DayAbsences | null) => {
@@ -800,7 +815,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      company, clients, entries, projects, extras, absences, expenseData, payrollData, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
+      company, clients, entries, projects, extras, projectExtras, absences, expenseData, payrollData, dirHandle, savedHandleAvailable, isDark, currentMonth, ioError,
       setCompany, setClients, addEntry, updateEntry, deleteEntry, touchProject, touchExtra, setAbsence,
       setExpenseData, setPayrollData, saveReceipt, openReceipt, deleteReceipt,
       pickDirectory, reconnectDirectory, toggleTheme, showMonths, readMonthEntries,

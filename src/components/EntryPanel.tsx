@@ -164,7 +164,7 @@ export default function EntryPopover({ entry, onClose }: Props) {
 }
 
 function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }) {
-  const { clients, entries, projects, extras, updateEntry, deleteEntry, touchProject, touchExtra, isDark, absences } = useStore();
+  const { clients, entries, projects, extras, projectExtras, updateEntry, deleteEntry, touchProject, touchExtra, isDark, absences } = useStore();
   const [dateBlocked, setDateBlocked] = useState<string | null>(null); // label of the absence that blocked a date change
 
   const [form, setForm] = useState({
@@ -222,10 +222,34 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
   }, [extras, entries, form.clientId]);
 
   // Auto-save: every change updates the entry immediately (disk write is debounced in the store)
-  const set = (k: string, v: string) => {
-    const next = { ...form, [k]: v };
+  const setMany = (patch: Partial<typeof form>) => {
+    const next = { ...form, ...patch };
     setForm(next);
     updateEntry({ id: entry.id, ...next });
+  };
+  const set = (k: keyof typeof form, v: string) => setMany({ [k]: v });
+
+  // Project and extra field (e.g. phase) are coupled: picking another project
+  // pre-fills the extra value last used with it. Remembered in project-extras.json,
+  // falling back to the latest loaded entry with that project.
+  const committedProject = useRef(entry.project.trim());
+  useEffect(() => { committedProject.current = entry.project.trim(); }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lastExtraFor = (clientId: string, project: string): string | undefined => {
+    const stored = projectExtras[clientId]?.[project];
+    if (stored) return stored;
+    const latest = entries
+      .filter(e => e.id !== entry.id && e.clientId === clientId && e.project.trim() === project && e.extra?.trim())
+      .sort((a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime))[0];
+    return latest?.extra?.trim();
+  };
+  const commitProject = (v: string) => {
+    touchProject(form.clientId, v);
+    const p = v.trim();
+    if (!p || p === committedProject.current) return;
+    committedProject.current = p;
+    if (!clients.find(c => c.id === form.clientId)?.extraField?.enabled) return;
+    const extra = lastExtraFor(form.clientId, p);
+    if (extra && extra !== form.extra) setMany({ project: v, extra });
   };
 
   const remove = () => {
@@ -320,7 +344,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
             Projekt <span className={form.project.trim() ? '' : 'text-red-400'}>*</span>
           </label>
           <ProjectInput value={form.project} onChange={v => set('project', v)}
-            onCommit={v => touchProject(form.clientId, v)}
+            onCommit={commitProject}
             suggestions={knownProjects} isDark={isDark}
             inputCls={form.project.trim() ? inputCls : `${inputCls} !border-red-400/60`} />
         </div>
@@ -335,7 +359,7 @@ function EntryForm({ entry, onClose }: { entry: TimeEntry; onClose: () => void }
                 {extraCfg.label || 'Zusatz'}
               </label>
               <ProjectInput value={form.extra} onChange={v => set('extra', v)}
-                onCommit={v => touchExtra(form.clientId, v)}
+                onCommit={v => touchExtra(form.clientId, v, form.project)}
                 suggestions={knownExtras} isDark={isDark} inputCls={inputCls}
                 placeholder={extraCfg.label || 'Zusatz'} />
             </div>
